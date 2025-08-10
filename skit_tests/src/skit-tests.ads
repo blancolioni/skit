@@ -29,6 +29,10 @@ package Skit.Tests is
       Operations : Stack_Operation_Array;
       Expected   : Object);
 
+   procedure Test
+     (Source   : String;
+      Expected : Object);
+
 private
 
    type Op_Type is (Push, Apply);

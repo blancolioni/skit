@@ -6,6 +6,9 @@ package body Skit.Compiler is
      (Machine : Skit.Machine.Reference;
       Variable : Object);
 
+   procedure Optimise
+     (Machine : Skit.Machine.Reference);
+
    -----------------------
    -- Abstract_Variable --
    -----------------------
@@ -36,6 +39,7 @@ package body Skit.Compiler is
             Machine.Apply;
             Machine.Push (Machine.Get (0));
             Machine.Apply;
+            Optimise (Machine);
          when others =>
             if Top = Variable then
                Machine.Push (I);
@@ -95,5 +99,70 @@ package body Skit.Compiler is
       end case;
       Indent := Indent - 2;
    end Compile;
+
+   --------------
+   -- Optimise --
+   --------------
+
+   procedure Optimise
+     (Machine : Skit.Machine.Reference)
+   is
+      Top : constant Object := Machine.Top;
+      function Is_S return Boolean
+      is (Top.Tag = Application_Object
+          and then Machine.Left (Top).Tag = Application_Object
+          and then Machine.Left (Machine.Left (Top)) = S);
+
+      function Is_App_K (O : Object) return Boolean
+      is (O.Tag = Application_Object
+          and then Machine.Left (O) = K);
+
+      function App_K (O : Object) return Object
+      is (Machine.Right (O));
+
+      X : constant Object :=
+            (if Is_S then Machine.Right (Machine.Left (Top)) else Nil);
+      Y : constant Object :=
+            (if Is_S
+             then Machine.Right (Top)
+             else Nil);
+   begin
+      if Is_S then
+         if Is_App_K (X) then
+            if Is_App_K (Y) then
+               Machine.Set (0, App_K (X));
+               Machine.Set (1, App_K (Y));
+               Machine.Drop;
+               Machine.Push (K);
+               Machine.Push (Machine.Get (0));
+               Machine.Push (Machine.Get (1));
+               Machine.Apply;
+               Machine.Apply;
+            elsif Y = I then
+               Machine.Set (0, App_K (X));
+               Machine.Drop;
+               Machine.Push (Machine.Get (0));
+            else
+               Machine.Set (0, App_K (X));
+               Machine.Set (1, Y);
+               Machine.Drop;
+               Machine.Push (B);
+               Machine.Push (Machine.Get (0));
+               Machine.Apply;
+               Machine.Push (Machine.Get (1));
+               Machine.Apply;
+            end if;
+         elsif Is_App_K (Y) then
+               Machine.Set (0, X);
+               Machine.Set (1, App_K (Y));
+               Machine.Drop;
+               Machine.Push (C);
+               Machine.Push (Machine.Get (0));
+               Machine.Apply;
+               Machine.Push (Machine.Get (1));
+               Machine.Apply;
+         end if;
+      end if;
+   end Optimise;
 
 end Skit.Compiler;

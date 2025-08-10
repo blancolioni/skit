@@ -33,5 +33,7 @@ begin
       [Λ, Var (0), Prim (0), Var (0), Apply, Var (0), Apply, Apply, Apply,
        Int (5), Apply],
       Skit.To_Object (10));
+   Test ("1", Skit.To_Object (1));
+   Test ("+ 1 1", Skit.To_Object (2));
 
 end Skit_Tests;
