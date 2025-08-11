@@ -1,6 +1,16 @@
 with Ada.Strings.Fixed;
+with Ada.Containers.Indefinite_Doubly_Linked_Lists;
 
 package body Skit.Debug is
+
+   type Variable_Binding is
+      record
+         Name : Character;
+         V    : Object;
+      end record;
+
+   package Variable_Binding_Lists is
+     new Ada.Containers.Indefinite_Doubly_Linked_Lists (Variable_Binding);
 
    -----------
    -- Image --
@@ -32,7 +42,14 @@ package body Skit.Debug is
                when 6 =>
                   return "\";
                when Primitive_Variable_Payload =>
-                  return "x";
+                  declare
+                     S : String :=
+                           Object_Payload'Image
+                             (X.Payload - Primitive_Variable_Payload'First);
+                  begin
+                     S (1) := '_';
+                     return S;
+                  end;
                when others =>
                   return "<"
                     & Ada.Strings.Fixed.Trim
@@ -55,6 +72,10 @@ package body Skit.Debug is
       Core : not null access constant Skit.Memory.Abstraction'Class)
       return String
    is
+
+      Vrbs : Variable_Binding_Lists.List;
+      Xs   : constant String := "xyzuvwijkabcdefghlmnopqrst";
+
       function Img (X : Object) return String;
 
       ---------
@@ -79,6 +100,17 @@ package body Skit.Debug is
                   return Left_Img & " " & Right_Img;
                end if;
             end;
+         elsif False
+           and then X.Tag = Primitive_Object
+           and then X.Payload in Primitive_Variable_Payload
+         then
+            for Binding of Vrbs loop
+               if Binding.V = X then
+                  return [Binding.Name];
+               end if;
+            end loop;
+            Vrbs.Append (Variable_Binding'(Xs (Natural (Vrbs.Length) + 1), X));
+            return [Vrbs.Last_Element.Name];
          else
             return Image (X);
          end if;

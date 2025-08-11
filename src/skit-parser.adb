@@ -8,6 +8,8 @@ package body Skit.Parser is
      (Source    : String;
       To_Object : not null access
         function (X : String) return Object;
+      Bind_Value : not null access
+        procedure (Name : String);
       Machine   : not null access Skit.Machine.Abstraction'Class)
    is
       Index : Natural := Source'First - 1;
@@ -19,12 +21,21 @@ package body Skit.Parser is
       function At_Expression return Boolean
       is (not At_End and then Ch /= ')');
 
+      function At_Id return Boolean
+      is (not At_End
+          and then Ch /= ' '
+          and then Ch /= '('
+          and then Ch /= ')'
+          and then Ch /= '\'
+          and then Ch /= '.');
+
       procedure Skip;
 
       procedure Skip_Spaces;
 
       procedure Parse_Expression;
       procedure Parse_Atomic;
+      function Parse_Id return String;
 
       ------------------
       -- Parse_Atomic --
@@ -41,21 +52,26 @@ package body Skit.Parser is
                raise Parse_Error with
                  "Position" & Index'Image & ": expected ')'";
             end if;
+         elsif Ch = '\' then
+            Skip;
+            declare
+               X : constant String := Parse_Id;
+            begin
+               Skip_Spaces;
+               if Ch = '.' then
+                  Skip;
+               end if;
+               Machine.Push (Skit.λ);
+               Machine.Push (To_Object (X));
+               Parse_Expression;
+               Machine.Apply;
+               Machine.Apply;
+            end;
          else
             declare
-               Id : String (1 .. 200);
-               Last : Natural := 0;
+               Id : constant String := Parse_Id;
             begin
-               while Ch /= ' ' loop
-                  Last := Last + 1;
-                  Id (Last) := Ch;
-                  Skip;
-               end loop;
-               declare
-                  Tok : constant String := Id (1 .. Last);
-               begin
-                  Machine.Push (To_Object (Tok));
-               end;
+               Machine.Push (To_Object (Id));
             end;
          end if;
       end Parse_Atomic;
@@ -80,6 +96,22 @@ package body Skit.Parser is
             Skip_Spaces;
          end loop;
       end Parse_Expression;
+
+      --------------
+      -- Parse_Id --
+      --------------
+
+      function Parse_Id return String is
+         Id   : String (1 .. 200);
+         Last : Natural := 0;
+      begin
+         while At_Id loop
+            Last := Last + 1;
+            Id (Last) := Ch;
+            Skip;
+         end loop;
+         return Id (1 .. Last);
+      end Parse_Id;
 
       ----------
       -- Skip --
@@ -107,9 +139,18 @@ package body Skit.Parser is
       end Skip_Spaces;
 
    begin
-
-      Parse_Expression;
-
+      Skip_Spaces;
+      if Ch = '!' then
+         Skip;
+         declare
+            Name : constant String := Parse_Id;
+         begin
+            Parse_Expression;
+            Bind_Value (Name);
+         end;
+      else
+         Parse_Expression;
+      end if;
    end Parse;
 
 end Skit.Parser;

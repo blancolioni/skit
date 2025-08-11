@@ -35,4 +35,8 @@ package Skit.Machine is
       return Object
    is abstract;
 
+   function Show_Top
+     (This : Abstraction'Class)
+      return String;
+
 end Skit.Machine;

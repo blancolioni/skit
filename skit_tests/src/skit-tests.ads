@@ -33,6 +33,10 @@ package Skit.Tests is
      (Source   : String;
       Expected : Object);
 
+   procedure Test
+     (Source   : String;
+      Expected : Integer);
+
 private
 
    type Op_Type is (Push, Apply);

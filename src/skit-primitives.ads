@@ -7,6 +7,13 @@ package Skit.Primitives is
       return Natural
       is abstract;
 
+   function Is_Lazy
+     (This : Abstraction;
+      Arg_Index : Positive)
+      return Boolean
+      is abstract
+     with Pre'Class => Arg_Index <= This.Argument_Count;
+
    function Evaluate
      (This      : Abstraction;
       Arguments : Object_Array)

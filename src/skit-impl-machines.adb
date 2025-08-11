@@ -1,11 +1,15 @@
 with Ada.Containers.Indefinite_Vectors;
+with Ada.Text_IO;
 
 with Skit.Allocator;
+with Skit.Debug;
 with Skit.Impl.Memory;
 with Skit.Marks;
 with Skit.Primitives;
 
 package body Skit.Impl.Machines is
+
+   Trace : constant Boolean := False;
 
    package Primitive_Function_Vectors is
      new Ada.Containers.Indefinite_Vectors
@@ -169,6 +173,10 @@ package body Skit.Impl.Machines is
    is
       X : constant Object := This.Pop;
    begin
+      if Trace then
+         Ada.Text_IO.Put_Line
+           ("evaluate: " & Debug.Image (X, This'Access));
+      end if;
       case X.Tag is
          when Integer_Object =>
             This.Push (X);
@@ -180,6 +188,10 @@ package body Skit.Impl.Machines is
             This.Push_Control (X);
             This.Evaluate_Application;
       end case;
+      if Trace then
+         Ada.Text_IO.Put_Line
+           ("result: " & Debug.Image (This.Top, This'Access));
+      end if;
    end Evaluate;
 
    --------------------------
@@ -197,9 +209,18 @@ package body Skit.Impl.Machines is
          It := This.Pop_Control;
 
          while It.Tag = Application_Object loop
+            if Trace then
+               Ada.Text_IO.Put_Line
+                 ("push: " & Debug.Image (It, This'Access));
+            end if;
             This.Push_Control (It);
             It := This.Core.Left (This.Control_Top);
          end loop;
+
+         if Trace then
+            Ada.Text_IO.Put_Line
+              ("stop: " & Debug.Image (It, This'Access));
+         end if;
 
          if It.Tag = Primitive_Object then
             case It.Payload is
@@ -239,6 +260,30 @@ package body Skit.Impl.Machines is
                      Changed := True;
                   end if;
 
+               when Payload_B =>
+                  if This.Pop_Control (This.R (1 .. 3)) then
+                     This.Push (This.Right (This.R (1)));
+                     This.Push (This.Right (This.R (2)));
+                     This.Push (This.Right (This.R (3)));
+                     This.Apply;
+                     This.Apply;
+                     It := This.Pop;
+                     This.Push_Control (It);
+                     Changed := True;
+                  end if;
+
+               when Payload_C =>
+                  if This.Pop_Control (This.R (1 .. 3)) then
+                     This.Push (This.Right (This.R (1)));
+                     This.Push (This.Right (This.R (3)));
+                     This.Apply;
+                     This.Push (This.Right (This.R (2)));
+                     This.Apply;
+                     It := This.Pop;
+                     This.Push_Control (It);
+                     Changed := True;
+                  end if;
+
                when Primitive_Function_Payload =>
                   declare
                      P : constant Natural :=
@@ -257,13 +302,21 @@ package body Skit.Impl.Machines is
                         begin
                            if This.Pop_Control (Args) then
                               This.Push (Args);
-                              for I in 1 .. Arg_Count loop
+                              for I in reverse 1 .. Arg_Count loop
                                  This.Push (This.Right (This.Pop));
-                                 This.Evaluate;
+                                 if not Fn.Is_Lazy (I) then
+                                    This.Evaluate;
+                                 end if;
                                  Arg := This.Pop;
+                                 if Trace then
+                                    Ada.Text_IO.Put_Line
+                                      ("arg" & Integer'Image (-I)
+                                       & ": "
+                                       & Debug.Image (Arg, This'Access));
+                                 end if;
                                  This.SS := This.Core.Allocate (Arg, This.SS);
                               end loop;
-                              for R of reverse Args loop
+                              for R of Args loop
                                  R := This.Left (This.SS);
                                  This.SS := This.Right (This.SS);
                               end loop;
