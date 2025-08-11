@@ -56,6 +56,7 @@ begin
    Test ("(\x.eq x 0 true false) 0 2 3", 2);
    Test ("true", Skit.K);
    Test ("* 4 (* 3 (* 2 (* 1 1)))", 24);
+   Test ("(\x.+ x x)(+ 1 2)", 6);
    Test ("fac 4", 24);
    Test ("gcd 35 7", 7);
 

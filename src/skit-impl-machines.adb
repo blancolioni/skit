@@ -333,6 +333,7 @@ package body Skit.Impl.Machines is
                            Arg       : Object;
                         begin
                            if This.Pop_Control (Args) then
+                              This.Push (Args (Arg_Count));
                               This.Push (Args);
                               for I in reverse 1 .. Arg_Count loop
                                  This.Push (This.Right (This.Pop));
@@ -353,6 +354,12 @@ package body Skit.Impl.Machines is
                                  This.SS := This.Right (This.SS);
                               end loop;
                               It := Fn.Evaluate (Args);
+                              declare
+                                 L : constant Object := This.Pop;
+                              begin
+                                 This.Set_Left (L, I);
+                                 This.Set_Right (L, It);
+                              end;
                               This.Push_Control (It);
                               Changed := True;
                            end if;
