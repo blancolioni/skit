@@ -61,6 +61,16 @@ package body Skit.Impl.Machines is
       return Object
    is (This.Core.Right (App));
 
+   overriding procedure Set_Left
+     (This : in out Instance;
+      App  : Object;
+      To   : Object);
+
+   overriding procedure Set_Right
+     (This : in out Instance;
+      App  : Object;
+      To   : Object);
+
    overriding function Pop
      (This   : in out Instance;
       Values : out Object_Array)
@@ -203,6 +213,24 @@ package body Skit.Impl.Machines is
    is
       It : Object;
       Changed : Boolean := True;
+
+      procedure Update
+        (X : Object;
+         V : Object);
+
+      ------------
+      -- Update --
+      ------------
+
+      procedure Update
+        (X : Object;
+         V : Object)
+      is
+      begin
+         This.Set_Left (X, I);
+         This.Set_Right (X, V);
+      end Update;
+
    begin
       while Changed loop
          Changed := False;
@@ -241,6 +269,7 @@ package body Skit.Impl.Machines is
                   begin
                      if This.Pop_Control (X) then
                         It := This.Core.Right (X (1));
+                        Update (X (2), It);
                         This.Push_Control (It);
                         Changed := True;
                      end if;
@@ -256,6 +285,7 @@ package body Skit.Impl.Machines is
                      This.Apply;
                      This.Apply;
                      It := This.Pop;
+                     Update (This.R (3), It);
                      This.Push_Control (It);
                      Changed := True;
                   end if;
@@ -268,6 +298,7 @@ package body Skit.Impl.Machines is
                      This.Apply;
                      This.Apply;
                      It := This.Pop;
+                     Update (This.R (3), It);
                      This.Push_Control (It);
                      Changed := True;
                   end if;
@@ -280,6 +311,7 @@ package body Skit.Impl.Machines is
                      This.Push (This.Right (This.R (2)));
                      This.Apply;
                      It := This.Pop;
+                     Update (This.R (3), It);
                      This.Push_Control (It);
                      Changed := True;
                   end if;
@@ -477,5 +509,31 @@ package body Skit.Impl.Machines is
    begin
       This.Temps (T) := Value;
    end Set;
+
+   --------------
+   -- Set_Left --
+   --------------
+
+   overriding procedure Set_Left
+     (This : in out Instance;
+      App  : Object;
+      To   : Object)
+   is
+   begin
+      This.Core.Set_Left (App, To);
+   end Set_Left;
+
+   ---------------
+   -- Set_Right --
+   ---------------
+
+   overriding procedure Set_Right
+     (This : in out Instance;
+      App  : Object;
+      To   : Object)
+   is
+   begin
+      This.Core.Set_Right (App, To);
+   end Set_Right;
 
 end Skit.Impl.Machines;

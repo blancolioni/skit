@@ -50,6 +50,16 @@ package body Skit.Impl.Memory is
       App  : Object)
       return Object;
 
+   overriding procedure Set_Left
+     (This : in out Instance;
+      App  : Object;
+      To   : Object);
+
+   overriding procedure Set_Right
+     (This : in out Instance;
+      App  : Object;
+      To   : Object);
+
    function In_From_Space
      (This   : Instance'Class;
       Item   : Object)
@@ -327,5 +337,39 @@ package body Skit.Impl.Memory is
 
       return This.Core (App.Payload).Right;
    end Right;
+
+   --------------
+   -- Set_Left --
+   --------------
+
+   overriding procedure Set_Left
+     (This : in out Instance;
+      App  : Object;
+      To   : Object)
+   is
+   begin
+      if App.Payload > This.Last then
+         raise Skit.Exceptions.Address_Error with App.Payload'Image;
+      end if;
+
+      This.Core (App.Payload).Left := To;
+   end Set_Left;
+
+   ---------------
+   -- Set_Right --
+   ---------------
+
+   overriding procedure Set_Right
+     (This : in out Instance;
+      App  : Object;
+      To   : Object)
+   is
+   begin
+      if App.Payload > This.Last then
+         raise Skit.Exceptions.Address_Error with App.Payload'Image;
+      end if;
+
+      This.Core (App.Payload).Right := To;
+   end Set_Right;
 
 end Skit.Impl.Memory;
