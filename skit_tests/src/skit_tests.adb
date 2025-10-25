@@ -53,6 +53,8 @@ begin
    Test ("true 1 2", 1);
    Test ("(\x.eq x 0 true false) 0 2 3", 2);
    Test ("true", Skit.K);
+   Test ("succ 41", 42);
+   Test ("pred 8088", 8087);
    Test ("* 4 (* 3 (* 2 (* 1 1)))", 24);
    Test ("(\x.+ x x)(+ 1 2)", 6);
    Test ("fac 1", 1);
