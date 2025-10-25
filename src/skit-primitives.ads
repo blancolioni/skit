@@ -4,11 +4,6 @@ package Skit.Primitives is
 
    type Abstraction is interface;
 
-   function Name
-     (This : Abstraction)
-      return String
-      is abstract;
-
    function Argument_Count
      (This : Abstraction)
       return Natural

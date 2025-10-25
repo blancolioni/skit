@@ -3,97 +3,24 @@ with Ada.Containers.Indefinite_Vectors;
 with Ada.Text_IO;
 
 with Skit.Compiler;
-with Skit.Containers;
 with Skit.Debug;
+with Skit.Environment;
 with Skit.Impl;
+with Skit.Library;
 with Skit.Machine;
 with Skit.Parser;
-with Skit.Primitives;
 with Skit.Stacks;
 
 package body Skit.Tests is
 
-   Trace : constant Boolean := False;
-
    Machine : Skit.Machine.Reference;
-
-   type Binding_Record (Length : Natural) is
-      record
-         Name  : String (1 .. Length);
-         Value : Object;
-      end record;
-
-   package Binding_Lists is
-     new Ada.Containers.Indefinite_Doubly_Linked_Lists (Binding_Record);
-
-   type Environment is new Skit.Containers.Abstraction with
-      record
-         List : Binding_Lists.List;
-      end record;
-
-   overriding procedure Mark
-     (This : in out Environment;
-      Set  : not null access
-        procedure (Item : in out Object));
+   Env     : Skit.Environment.Reference;
 
    package Variable_Vectors is
      new Ada.Containers.Indefinite_Vectors (Natural, String);
 
    package Source_Lists is
      new Ada.Containers.Indefinite_Doubly_Linked_Lists (String);
-
-   type Prim_Int_Op is access
-     function (X, Y : Integer) return Integer;
-
-   type Prim_Int_Op_Instance is
-     new Skit.Primitives.Abstraction with
-      record
-         Op : Prim_Int_Op;
-      end record;
-
-   overriding function Name
-     (This : Prim_Int_Op_Instance)
-      return String
-   is ("prim-int-op");
-
-   overriding function Argument_Count
-     (This : Prim_Int_Op_Instance)
-      return Natural
-   is (2);
-
-   overriding procedure Evaluate
-     (This    : Prim_Int_Op_Instance;
-      Stack   : in out Skit.Stacks.Abstraction'Class);
-
-   function Add (X, Y : Integer) return Integer is (X + Y);
-   function Sub (X, Y : Integer) return Integer is (X - Y);
-   function Mul (X, Y : Integer) return Integer is (X * Y);
-   function Modulus (X, Y : Integer) return Integer is (X mod Y);
-
-   type Predicate_Op is access
-     function (X, Y : Object) return Boolean;
-
-   type Predicate_Instance is
-     new Skit.Primitives.Abstraction with
-      record
-         Op : Predicate_Op;
-      end record;
-
-   overriding function Name
-     (This : Predicate_Instance)
-      return String
-   is ("predicate");
-
-   overriding function Argument_Count
-     (This : Predicate_Instance)
-      return Natural
-   is (2);
-
-   overriding procedure Evaluate
-     (This    : Predicate_Instance;
-      Stack   : in out Skit.Stacks.Abstraction'Class);
-
-   function Eq (X, Y : Object) return Boolean is (X = Y);
 
    ----------
    -- Test --
@@ -105,7 +32,6 @@ package body Skit.Tests is
       Expected   : Object;
       Compile    : Boolean);
 
-   Env     : aliased Environment;
    Vrbs    : Variable_Vectors.Vector;
 
    Prelude : constant Source_Lists.List :=
@@ -125,58 +51,11 @@ package body Skit.Tests is
                 "!rec Y (\f.\x.eq x 0 22 (f (pred x)))"
                ];
 
-   --------------
-   -- Evaluate --
-   --------------
-
-   overriding procedure Evaluate
-     (This    : Predicate_Instance;
-      Stack   : in out Skit.Stacks.Abstraction'Class)
-   is
-      X : constant Object := Stack.Pop;
-      Y : constant Object := Stack.Pop;
-   begin
-      if This.Op (X, Y) then
-         Stack.Push (Skit.K);
-      else
-         Stack.Push (Skit.K);
-         Stack.Push (Skit.I);
-         Stack.Apply;
-      end if;
-   end Evaluate;
-
-   --------------
-   -- Evaluate --
-   --------------
-
-   overriding procedure Evaluate
-     (This    : Prim_Int_Op_Instance;
-      Stack   : in out Skit.Stacks.Abstraction'Class)
-   is
-      X : constant Object := Stack.Pop;
-      Y : constant Object := Stack.Pop;
-      Z : constant Object :=
-        To_Object
-          (This.Op
-             (To_Integer (X),
-              To_Integer (Y)));
-   begin
-      Stack.Push (Z);
-   end Evaluate;
-
    ----------------
    -- Initialize --
    ----------------
 
    procedure Initialize is
-
-      procedure Primitive
-        (Name : String;
-         Fn   : Prim_Int_Op);
-
-      procedure Primitive
-        (Name : String;
-         Fn   : Predicate_Op);
 
       function To_Object (Tok : String) return Skit.Object;
       procedure Bind_Value (Name : String);
@@ -187,47 +66,8 @@ package body Skit.Tests is
 
       procedure Bind_Value (Name : String) is
       begin
-         --  Skit.Compiler.Compile (Machine);
-         declare
-            Rec : constant Binding_Record := (Name'Length, Name, Machine.Pop);
-         begin
-            if Trace then
-               Ada.Text_IO.Put_Line
-                 (Name & " <- " & Debug.Image (Rec.Value, Machine));
-            end if;
-            Env.List.Append (Rec);
-         end;
+         Env.Bind (Name, Machine.Pop);
       end Bind_Value;
-
-      ---------------
-      -- Primitive --
-      ---------------
-
-      procedure Primitive
-        (Name : String;
-         Fn   : Prim_Int_Op)
-      is
-      begin
-         Env.List.Append
-           (Binding_Record'
-              (Name'Length, Name,
-               Machine.Bind (Prim_Int_Op_Instance'(Op => Fn))));
-      end Primitive;
-
-      ---------------
-      -- Primitive --
-      ---------------
-
-      procedure Primitive
-        (Name : String;
-         Fn   : Predicate_Op)
-      is
-      begin
-         Env.List.Append
-           (Binding_Record'
-              (Name'Length, Name,
-               Machine.Bind (Predicate_Instance'(Op => Fn))));
-      end Primitive;
 
       ---------------
       -- To_Object --
@@ -248,11 +88,15 @@ package body Skit.Tests is
          elsif Tok = "C" then
             return Skit.C;
          else
-            for Decl of Env.List loop
-               if Decl.Name = Tok then
-                  return Decl.Value;
+            declare
+               Value : constant Object := Env.Lookup (Tok);
+            begin
+               if Value /= Undefined then
+                  Ada.Text_IO.Put_Line
+                    (Tok & ": " & Skit.Debug.Image (Value, Machine));
+                  return Value;
                end if;
-            end loop;
+            end;
 
             declare
                use Variable_Vectors;
@@ -275,13 +119,8 @@ package body Skit.Tests is
 
    begin
       Machine := Skit.Impl.Machine (4 * 1024);
-      Primitive ("+", Add'Access);
-      Primitive ("-", Sub'Access);
-      Primitive ("*", Mul'Access);
-      Primitive ("mod", Modulus'Access);
-      Primitive ("eq", Eq'Access);
-
-      Machine.Add_Container (Env'Access);
+      Env     := Skit.Environment.Create (Machine);
+      Skit.Library.Load_Standard_Library (Env);
 
       for Decl of Prelude loop
          Skit.Parser.Parse
@@ -289,21 +128,6 @@ package body Skit.Tests is
       end loop;
 
    end Initialize;
-
-   ----------
-   -- Mark --
-   ----------
-
-   overriding procedure Mark
-     (This : in out Environment;
-      Set  : not null access
-        procedure (Item : in out Object))
-   is
-   begin
-      for Binding of This.List loop
-         Set (Binding.Value);
-      end loop;
-   end Mark;
 
    ------------
    -- Report --
@@ -388,15 +212,18 @@ package body Skit.Tests is
       procedure Bind_Value (Name : String) is
       begin
          --  Skit.Compiler.Compile (Machine);
-         declare
-            Rec : constant Binding_Record := (Name'Length, Name, Machine.Pop);
-         begin
-            if Trace then
-               Ada.Text_IO.Put_Line
-                 (Name & " <- " & Debug.Image (Rec.Value, Machine));
-            end if;
-            Env.List.Append (Rec);
-         end;
+         Env.Bind (Name, Machine.Pop);
+
+         --  declare
+         --     Rec : constant Binding_Record :=
+         --             (Name'Length, Name, Machine.Pop);
+         --  begin
+         --     if Trace then
+         --        Ada.Text_IO.Put_Line
+         --          (Name & " <- " & Debug.Image (Rec.Value, Machine));
+         --     end if;
+         --     Env.List.Append (Rec);
+         --  end;
       end Bind_Value;
 
       ---------------
@@ -418,11 +245,13 @@ package body Skit.Tests is
          elsif Tok = "C" then
             return Skit.C;
          else
-            for Decl of Env.List loop
-               if Decl.Name = Tok then
-                  return Decl.Value;
+            declare
+               Value : constant Object := Env.Lookup (Tok);
+            begin
+               if Value /= Undefined then
+                  return Value;
                end if;
-            end loop;
+            end;
 
             declare
                use Variable_Vectors;

@@ -20,10 +20,10 @@ begin
          [K, S, Apply, I, S, K, Apply, S, Apply, I, Apply, Apply, Apply],
          Skit.S);
    Test ("+ (I 1) 2 ==> 3",
-         [Prim (0), I, Int (1), Apply, Apply, Int (2), Apply],
+         [Prim (1), I, Int (1), Apply, Apply, Int (2), Apply],
          Skit.To_Object (3));
    Test_Compiler ("+ 1 2 ==> 3",
-         [Prim (0), Int (1), Apply, Int (2), Apply],
+         [Prim (1), Int (1), Apply, Int (2), Apply],
          Skit.To_Object (3));
    Test_Compiler
      ("\x.x ==> I",
@@ -31,7 +31,7 @@ begin
       Skit.I);
    Test_Compiler
      ("(\x.+ x x) 5 ==> 10",
-      [Λ, Var (0), Prim (0), Var (0), Apply, Var (0), Apply, Apply, Apply,
+      [Λ, Var (0), Prim (1), Var (0), Apply, Var (0), Apply, Apply, Apply,
        Int (5), Apply],
       Skit.To_Object (10));
    Test ("1", Skit.To_Object (1));

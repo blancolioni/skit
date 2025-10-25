@@ -14,7 +14,7 @@ package Skit.Machine is
    function Bind
      (This      : in out Abstraction;
       Primitive : Skit.Primitives.Abstraction'Class)
-     return Object
+      return Object
    is abstract;
 
    type Temporary is range 0 .. 15;
@@ -31,8 +31,4 @@ package Skit.Machine is
       return Object
    is abstract;
 
-   --  function Show_Top
-   --    (This : Abstraction'Class)
-   --     return String;
-   --
 end Skit.Machine;

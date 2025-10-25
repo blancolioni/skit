@@ -10,13 +10,14 @@ package Skit is
    type Object is private;
    type Object_Array is array (Positive range <>) of Object;
 
-   Nil : constant Object;
-   S   : constant Object;
-   K   : constant Object;
-   I   : constant Object;
-   C   : constant Object;
-   B   : constant Object;
-   λ   : constant Object;
+   Nil       : constant Object;
+   S         : constant Object;
+   K         : constant Object;
+   I         : constant Object;
+   C         : constant Object;
+   B         : constant Object;
+   Λ        : constant Object;
+   Undefined : constant Object;
 
    function To_Object (X : Integer) return Object;
    function To_Object (X : Float) return Object;
@@ -42,21 +43,23 @@ private
       end record
      with Pack, Size => 32;
 
-   Payload_Nil    : constant Object_Payload := 0;
-   Payload_S      : constant Object_Payload := 1;
-   Payload_K      : constant Object_Payload := 2;
-   Payload_I      : constant Object_Payload := 3;
-   Payload_C      : constant Object_Payload := 4;
-   Payload_B      : constant Object_Payload := 5;
-   Payload_Lambda : constant Object_Payload := 6;
+   Payload_Nil       : constant Object_Payload := 0;
+   Payload_S         : constant Object_Payload := 1;
+   Payload_K         : constant Object_Payload := 2;
+   Payload_I         : constant Object_Payload := 3;
+   Payload_C         : constant Object_Payload := 4;
+   Payload_B         : constant Object_Payload := 5;
+   Payload_Lambda    : constant Object_Payload := 6;
+   Payload_Undefined : constant Object_Payload := 7;
 
-   Nil : constant Object := (Payload_Nil, Primitive_Object);
-   S   : constant Object := (Payload_S, Primitive_Object);
-   K   : constant Object := (Payload_K, Primitive_Object);
-   I   : constant Object := (Payload_I, Primitive_Object);
-   C   : constant Object := (Payload_C, Primitive_Object);
-   B   : constant Object := (Payload_B, Primitive_Object);
-   λ   : constant Object := (Payload_Lambda, Primitive_Object);
+   Nil       : constant Object := (Payload_Nil, Primitive_Object);
+   S         : constant Object := (Payload_S, Primitive_Object);
+   K         : constant Object := (Payload_K, Primitive_Object);
+   I         : constant Object := (Payload_I, Primitive_Object);
+   C         : constant Object := (Payload_C, Primitive_Object);
+   B         : constant Object := (Payload_B, Primitive_Object);
+   Λ         : constant Object := (Payload_Lambda, Primitive_Object);
+   Undefined : constant Object := (Payload_Undefined, Primitive_Object);
 
    subtype Primitive_Function_Payload is
      Object_Payload range 64 .. 255;
@@ -70,5 +73,8 @@ private
    function To_Variable_Object (Index : Variable_Index) return Object
    is (Object_Payload (Index) + Primitive_Variable_Payload'First,
        Primitive_Object);
+
+   function Is_Primitive (O : Object) return Boolean
+   is (O.Tag = Primitive_Object);
 
 end Skit;

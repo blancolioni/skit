@@ -354,11 +354,6 @@ package body Skit.Impl.Machines is
                            Fn : constant Skit.Primitives.Abstraction'Class :=
                                   This.Prims (P);
                         begin
-                           if Trace then
-                              Ada.Text_IO.Put_Line
-                                ("prim: " & Fn.Name);
-                           end if;
-
                            for I in 1 .. Fn.Argument_Count loop
                               declare
                                  A : constant Object :=
