@@ -16,6 +16,8 @@ package body Skit.Tests is
    Machine : Skit.Machine.Reference;
    Env     : Skit.Environment.Reference;
 
+   Total, Pass, Fail : Natural := 0;
+
    package Variable_Vectors is
      new Ada.Containers.Indefinite_Vectors (Natural, String);
 
@@ -43,6 +45,12 @@ package body Skit.Tests is
                 "!succ \x.+ x 1",
                 "!pred \x.- x 1",
                 "!not \x.if x false true",
+                "!and \x.\y.if x y false",
+                "!or \x.\y.if x true Y",
+                "!lt \x.\y.and (le x y) (not (eq x y))",
+                "!gt \x.\y.not (le x y)",
+                "!ge \x.\y.not (lt x y)",
+                "!ne \x.\y.not (eq x y)",
                 "!zero \x.eq x 0 true false",
                 "!count Y (\f.\n.zero n 0 (f (- n 1)))",
                 "!fac Y (\f.\n.zero n 1 (* n (f (- n 1))))",
@@ -134,6 +142,13 @@ package body Skit.Tests is
 
    procedure Report is
    begin
+      Ada.Text_IO.Put_Line
+        ("Total tests" & Total'Image
+        & "; passed: "
+        & Pass'Image
+        & "; failed: "
+        & Fail'Image);
+
       Machine.Report;
    end Report;
 
@@ -148,6 +163,8 @@ package body Skit.Tests is
       Compile    : Boolean)
    is
    begin
+      Total := @ + 1;
+
       for Element of Operations loop
          case Element.Op is
             when Apply =>
@@ -170,8 +187,10 @@ package body Skit.Tests is
          Ada.Text_IO.Set_Col (40);
 
          if Result = Expected then
+            Pass := @ + 1;
             Ada.Text_IO.Put_Line ("PASS");
          else
+            Fail := @ + 1;
             Ada.Text_IO.Put_Line
               ("expected: " & Skit.Debug.Image (Expected)
                & "; found " & Skit.Debug.Image (Result, Machine));
@@ -272,6 +291,7 @@ package body Skit.Tests is
       end To_Object;
 
    begin
+      Total := @ + 1;
       Skit.Parser.Parse (Source, To_Object'Access, Bind_Value'Access, Machine);
       Skit.Compiler.Compile (Machine);
       Machine.Evaluate;
@@ -284,10 +304,12 @@ package body Skit.Tests is
 
          if Result = Expected then
             Ada.Text_IO.Put_Line ("PASS");
+            Pass := @ + 1;
          else
             Ada.Text_IO.Put_Line
               ("expected: " & Skit.Debug.Image (Expected)
                & "; found " & Skit.Debug.Image (Result, Machine));
+            Fail := @ + 1;
          end if;
       end;
 
