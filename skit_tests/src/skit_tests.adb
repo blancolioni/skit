@@ -2,6 +2,8 @@ with Skit.Tests;
 
 procedure Skit_Tests is
    use Skit.Tests;
+   Plus : constant Stack_Operation_Type :=
+            Prim (2);
 begin
    Initialize;
    Test ("I x ==> x", [I, Int (1), Apply], Skit.To_Object (1));
@@ -20,10 +22,10 @@ begin
          [K, S, Apply, I, S, K, Apply, S, Apply, I, Apply, Apply, Apply],
          Skit.S);
    Test ("+ (I 1) 2 ==> 3",
-         [Prim (1), I, Int (1), Apply, Apply, Int (2), Apply],
+         [Plus, I, Int (1), Apply, Apply, Int (2), Apply],
          Skit.To_Object (3));
    Test_Compiler ("+ 1 2 ==> 3",
-         [Prim (1), Int (1), Apply, Int (2), Apply],
+         [Plus, Int (1), Apply, Int (2), Apply],
          Skit.To_Object (3));
    Test_Compiler
      ("\x.x ==> I",
@@ -31,7 +33,7 @@ begin
       Skit.I);
    Test_Compiler
      ("(\x.+ x x) 5 ==> 10",
-      [Λ, Var (0), Prim (1), Var (0), Apply, Var (0), Apply, Apply, Apply,
+      [Λ, Var (0), Plus, Var (0), Apply, Var (0), Apply, Apply, Apply,
        Int (5), Apply],
       Skit.To_Object (10));
    Test ("1", Skit.To_Object (1));
@@ -64,5 +66,6 @@ begin
    Test ("fac 5", 120);
    Test ("gcd 35 5", 5);
    Test ("gcd 122 12", 2);
+   Test ("putChar 1 955", 2);
    Report;
 end Skit_Tests;

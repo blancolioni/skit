@@ -1,3 +1,4 @@
+with Ada.Wide_Wide_Text_IO;
 with Skit.Primitives;
 with Skit.Stacks;
 
@@ -55,6 +56,8 @@ package body Skit.Library is
       Stack   : in out Skit.Stacks.Abstraction'Class);
 
    function Eq (X, Y : Object) return Boolean is (X = Y);
+   function Le (X, Y : Object) return Boolean
+   is (To_Integer (X) <= To_Integer (Y));
 
    function Predicate
      (Op : Predicate_Op)
@@ -65,6 +68,18 @@ package body Skit.Library is
       Op_Float : Prim_Float_Op)
       return Skit.Primitives.Abstraction'Class
      is (Prim_Binary_Op_Instance'(Op_Int, Op_Float));
+
+   type Put_Char_Instance is
+     new Skit.Primitives.Abstraction with null record;
+
+   overriding function Argument_Count
+     (This : Put_Char_Instance)
+      return Natural
+   is (2);
+
+   overriding procedure Evaluate
+     (This    : Put_Char_Instance;
+      Stack   : in out Skit.Stacks.Abstraction'Class);
 
    --------------
    -- Evaluate --
@@ -105,6 +120,22 @@ package body Skit.Library is
       Stack.Push (Z);
    end Evaluate;
 
+   --------------
+   -- Evaluate --
+   --------------
+
+   overriding procedure Evaluate
+     (This    : Put_Char_Instance;
+      Stack   : in out Skit.Stacks.Abstraction'Class)
+   is
+      World_Index : constant Object := Stack.Pop;
+      Char_Index  : constant Object := Stack.Pop;
+   begin
+      Ada.Wide_Wide_Text_IO.Put
+        (Wide_Wide_Character'Val (To_Integer (Char_Index)));
+      Stack.Push (To_Object (To_Integer (World_Index) + 1));
+   end Evaluate;
+
    ---------------------------
    -- Load_Standard_Library --
    ---------------------------
@@ -130,11 +161,13 @@ package body Skit.Library is
 
    begin
       Bind ("eq", Predicate (Eq'Access));
+      Bind ("le", Predicate (Le'Access));
       Bind ("+", Binary_Op (Add'Access, Add'Access));
       Bind ("-", Binary_Op (Sub'Access, Sub'Access));
       Bind ("*", Binary_Op (Mul'Access, Mul'Access));
       Bind ("/", Binary_Op (Int_Div'Access, Div'Access));
       Bind ("mod", Binary_Op (Int_Mod'Access, null));
+      Bind ("putChar", Put_Char_Instance'(null record));
    end Load_Standard_Library;
 
    ---------------
