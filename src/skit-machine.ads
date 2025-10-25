@@ -17,10 +17,6 @@ package Skit.Machine is
      return Object
    is abstract;
 
-   procedure Apply
-     (This : in out Abstraction)
-   is abstract;
-
    type Temporary is range 0 .. 15;
 
    procedure Set
@@ -35,8 +31,8 @@ package Skit.Machine is
       return Object
    is abstract;
 
-   function Show_Top
-     (This : Abstraction'Class)
-      return String;
-
+   --  function Show_Top
+   --    (This : Abstraction'Class)
+   --     return String;
+   --
 end Skit.Machine;

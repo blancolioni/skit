@@ -1,5 +1,7 @@
 /obj/
-/lib/
 /bin/
+/lib/
 /alire/
 /config/
+*~
+*.log

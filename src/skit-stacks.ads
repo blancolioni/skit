@@ -18,6 +18,10 @@ package Skit.Stacks is
       return Object
       is abstract;
 
+   procedure Apply
+     (This : in out Abstraction)
+   is abstract;
+
    procedure Push
      (This  : in out Abstraction'Class;
       Value : Object);

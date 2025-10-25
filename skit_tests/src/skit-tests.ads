@@ -19,6 +19,8 @@ package Skit.Tests is
    type Stack_Operation_Array is
      array (Positive range <>) of Stack_Operation_Type;
 
+   procedure Initialize;
+
    procedure Test
      (Name       : String;
       Operations : Stack_Operation_Array;
@@ -36,6 +38,8 @@ package Skit.Tests is
    procedure Test
      (Source   : String;
       Expected : Integer);
+
+   procedure Report;
 
 private
 

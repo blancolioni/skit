@@ -3,11 +3,7 @@ with Skit.Tests;
 procedure Skit_Tests is
    use Skit.Tests;
 begin
-   if False then
-      Test ("fac 3", 12);
-      return;
-   end if;
-
+   Initialize;
    Test ("I x ==> x", [I, Int (1), Apply], Skit.To_Object (1));
    Test ("K x y ==> x", [K, Int (42), Apply, Int (666), Apply],
          Skit.To_Object (42));
@@ -40,6 +36,8 @@ begin
       Skit.To_Object (10));
    Test ("1", Skit.To_Object (1));
    Test ("+ 1 1", Skit.To_Object (2));
+   Test ("- 2 1", Skit.To_Object (1));
+   Test ("- 1 2", Skit.To_Object (-1));
    Test ("(\x.+ x 40) 2", Skit.To_Object (42));
    Test ("id 10", Skit.To_Object (10));
    Test ("if true 1 2", Skit.To_Object (1));
@@ -57,9 +55,12 @@ begin
    Test ("true", Skit.K);
    Test ("* 4 (* 3 (* 2 (* 1 1)))", 24);
    Test ("(\x.+ x x)(+ 1 2)", 6);
-   Test ("fac 4", 24);
-   Test ("gcd 35 7", 7);
-
-   --  Test ("if (zero 0) 1 2", 1);
-
+   Test ("fac 1", 1);
+   Test ("gcd 1 1", 1);
+   Test ("fac 2", 2);
+   Test ("fac 3", 6);
+   Test ("fac 5", 120);
+   Test ("gcd 35 5", 5);
+   Test ("gcd 122 12", 2);
+   Report;
 end Skit_Tests;

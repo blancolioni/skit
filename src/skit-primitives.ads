@@ -1,23 +1,22 @@
+with Skit.Stacks;
+
 package Skit.Primitives is
 
    type Abstraction is interface;
+
+   function Name
+     (This : Abstraction)
+      return String
+      is abstract;
 
    function Argument_Count
      (This : Abstraction)
       return Natural
       is abstract;
 
-   function Is_Lazy
-     (This : Abstraction;
-      Arg_Index : Positive)
-      return Boolean
-      is abstract
-     with Pre'Class => Arg_Index <= This.Argument_Count;
-
-   function Evaluate
-     (This      : Abstraction;
-      Arguments : Object_Array)
-      return Object
-      is abstract;
+   procedure Evaluate
+     (This    : Abstraction;
+      Stack   : in out Skit.Stacks.Abstraction'Class)
+   is abstract;
 
 end Skit.Primitives;

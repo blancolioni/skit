@@ -11,7 +11,8 @@ package body Skit is
      new Ada.Unchecked_Conversion (Float, Transfer_Word);
 
    function To_Integer
-   is new Ada.Unchecked_Conversion (Transfer_Word, Integer);
+   is new Ada.Unchecked_Conversion (Transfer_Word, Integer)
+     with Unreferenced;
 
    function To_Float
    is new Ada.Unchecked_Conversion (Transfer_Word, Float);
@@ -30,8 +31,13 @@ package body Skit is
    ----------------
 
    function To_Integer (X : Object) return Integer is
+      W : constant Transfer_Word := Transfer_Word (X.Payload);
    begin
-      return To_Integer (Transfer_Word (X.Payload));
+      if W < 2 ** (Payload_Size - 1) then
+         return Integer (X.Payload);
+      else
+         return -Integer (2 ** Payload_Size - W);
+      end if;
    end To_Integer;
 
    ---------------
@@ -41,7 +47,7 @@ package body Skit is
    function To_Object (X : Integer) return Object is
       W : constant Transfer_Word := To_Integer_Word (X);
    begin
-      return (Object_Payload (W), Integer_Object);
+      return (Object_Payload (W and (2 ** Payload_Size - 1)), Integer_Object);
    end To_Object;
 
    ---------------

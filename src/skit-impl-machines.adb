@@ -4,7 +4,7 @@ with Ada.Text_IO;
 with Skit.Allocator;
 with Skit.Debug;
 with Skit.Impl.Memory;
-with Skit.Marks;
+with Skit.Containers;
 with Skit.Primitives;
 
 package body Skit.Impl.Machines is
@@ -20,19 +20,25 @@ package body Skit.Impl.Machines is
 
    type Temporary_Array is array (Skit.Machine.Temporary) of Object;
 
+   type Internal_Register is (Stack, Control, Dump, Secondary_Stack);
+   type Internal_Register_Array is array (Internal_Register) of Object;
+
    subtype Parent is Skit.Machine.Abstraction;
-   type Instance is new Parent and Skit.Marks.Abstraction with
+
+   type Instance is new Parent and Skit.Containers.Abstraction with
       record
-         Core    : Skit.Allocator.Reference;
-         Stack   : Object := Nil;
-         Control : Object := Nil;
-         SS      : Object := Nil;
-         R       : Object_Array (Register);
-         Locals  : Object_Array (1 .. Max_Locals) := [others => Nil];
-         Temps   : Temporary_Array := [others => Nil];
-         Prims   : Primitive_Function_Vectors.Vector;
+         Core     : Skit.Allocator.Reference;
+         Internal : Internal_Register_Array := [others        => Nil];
+         R        : Object_Array (Register);
+         Locals   : Object_Array (1 .. Max_Locals) := [others => Nil];
+         Temps    : Temporary_Array := [others => Nil];
+         Prims    : Primitive_Function_Vectors.Vector;
       end record;
    type Reference is access all Instance'Class;
+
+   overriding procedure Add_Container
+     (This      : in out Instance;
+      Container : not null access Skit.Containers.Abstraction'Class);
 
    overriding procedure Apply
      (This : in out Instance);
@@ -82,8 +88,7 @@ package body Skit.Impl.Machines is
 
    overriding function Top
      (This   : Instance)
-      return Object
-   is (This.Core.Left (This.Stack));
+      return Object;
 
    overriding procedure Set
      (This  : in out Instance;
@@ -96,25 +101,57 @@ package body Skit.Impl.Machines is
       return Object
    is (This.Temps (T));
 
-   function Pop_Control
+   overriding procedure Report
+     (This : Instance);
+
+   function Pop
      (This   : in out Instance'Class;
+      Stack  : Internal_Register;
       Values : out Object_Array)
       return Boolean;
 
-   function Pop_Control
-     (This   : in out Instance'Class)
+   function Top
+     (This   : Instance'Class;
+      Stack  : Internal_Register)
       return Object;
 
-   function Control_Top
-     (This   : Instance'Class)
+   function Pop
+     (This   : in out Instance'Class;
+      Stack  : Internal_Register)
       return Object;
 
-   procedure Push_Control
+   procedure Push
      (This  : in out Instance'Class;
+      Stack : Internal_Register;
       Value : Object);
+
+   procedure Push
+     (This   : in out Instance'Class;
+      Stack  : Internal_Register;
+      Values : in out Object_Array);
 
    procedure Evaluate_Application
      (This  : in out Instance'Class);
+
+   procedure Reset_State
+     (This      : in out Instance'Class;
+      Stack_Top : Object);
+
+   procedure Restore_State
+     (This      : in out Instance'Class;
+      Stack_Top : Object);
+
+   -------------------
+   -- Add_Container --
+   -------------------
+
+   overriding procedure Add_Container
+     (This      : in out Instance;
+      Container : not null access Skit.Containers.Abstraction'Class)
+   is
+   begin
+      This.Core.Add_Container (Container);
+   end Add_Container;
 
    -----------
    -- Apply --
@@ -148,18 +185,6 @@ package body Skit.Impl.Machines is
               Primitive_Object);
    end Bind;
 
-   -----------------
-   -- Control_Top --
-   -----------------
-
-   function Control_Top
-     (This   : Instance'Class)
-      return Object
-   is
-   begin
-      return This.Core.Left (This.Control);
-   end Control_Top;
-
    ------------
    -- Create --
    ------------
@@ -170,7 +195,8 @@ package body Skit.Impl.Machines is
    is
       This : constant Reference := new Instance;
    begin
-      This.Core := Skit.Impl.Memory.Create (Core_Size, This);
+      This.Core := Skit.Impl.Memory.Create (Core_Size);
+      This.Core.Add_Container (This);
       return Skit.Machine.Reference (This);
    end Create;
 
@@ -185,7 +211,7 @@ package body Skit.Impl.Machines is
    begin
       if Trace then
          Ada.Text_IO.Put_Line
-           ("evaluate: " & Debug.Image (X, This'Access));
+           ("evaluate: " & Debug.Image (X, This'Access) & " {");
       end if;
       case X.Tag is
          when Integer_Object =>
@@ -195,12 +221,12 @@ package body Skit.Impl.Machines is
          when Primitive_Object =>
             This.Push (X);
          when Application_Object =>
-            This.Push_Control (X);
+            This.Push (Control, X);
             This.Evaluate_Application;
       end case;
       if Trace then
          Ada.Text_IO.Put_Line
-           ("result: " & Debug.Image (This.Top, This'Access));
+           ("} result: " & Debug.Image (This.Top, This'Access));
       end if;
    end Evaluate;
 
@@ -211,7 +237,7 @@ package body Skit.Impl.Machines is
    procedure Evaluate_Application
      (This  : in out Instance'Class)
    is
-      It : Object;
+      It      : Object;
       Changed : Boolean := True;
 
       procedure Update
@@ -234,15 +260,16 @@ package body Skit.Impl.Machines is
    begin
       while Changed loop
          Changed := False;
-         It := This.Pop_Control;
+         It := This.Pop (Control);
 
          while It.Tag = Application_Object loop
             if Trace then
                Ada.Text_IO.Put_Line
-                 ("push: " & Debug.Image (It, This'Access));
+                 ("push: "
+                  & Debug.Image (This.Right (It), This'Access));
             end if;
-            This.Push_Control (It);
-            It := This.Core.Left (This.Control_Top);
+            This.Push (Control, It);
+            It := This.Core.Left (This.Top (Control));
          end loop;
 
          if Trace then
@@ -256,9 +283,9 @@ package body Skit.Impl.Machines is
                   declare
                      X : Object_Array (1 .. 1);
                   begin
-                     if This.Pop_Control (X) then
+                     if This.Pop (Control, X) then
                         It := This.Core.Right (X (1));
-                        This.Push_Control (It);
+                        This.Push (Control, It);
                         Changed := True;
                      end if;
                   end;
@@ -267,52 +294,52 @@ package body Skit.Impl.Machines is
                   declare
                      X : Object_Array (1 .. 2);
                   begin
-                     if This.Pop_Control (X) then
-                        It := This.Core.Right (X (1));
-                        Update (X (2), It);
-                        This.Push_Control (It);
+                     if This.Pop (Control, X) then
+                        It := This.Core.Right (X (2));
+                        Update (X (1), It);
+                        This.Push (Control, It);
                         Changed := True;
                      end if;
                   end;
 
                when Payload_S =>
-                  if This.Pop_Control (This.R (1 .. 3)) then
-                     This.Push (This.Right (This.R (1)));
+                  if This.Pop (Control, This.R (1 .. 3)) then
                      This.Push (This.Right (This.R (3)));
+                     This.Push (This.Right (This.R (1)));
                      This.Apply;
                      This.Push (This.Right (This.R (2)));
-                     This.Push (This.Right (This.R (3)));
+                     This.Push (This.Right (This.R (1)));
                      This.Apply;
                      This.Apply;
                      It := This.Pop;
-                     Update (This.R (3), It);
-                     This.Push_Control (It);
+                     Update (This.R (1), It);
+                     This.Push (Control, It);
                      Changed := True;
                   end if;
 
                when Payload_B =>
-                  if This.Pop_Control (This.R (1 .. 3)) then
-                     This.Push (This.Right (This.R (1)));
-                     This.Push (This.Right (This.R (2)));
+                  if This.Pop (Control, This.R (1 .. 3)) then
                      This.Push (This.Right (This.R (3)));
+                     This.Push (This.Right (This.R (2)));
+                     This.Push (This.Right (This.R (1)));
                      This.Apply;
                      This.Apply;
                      It := This.Pop;
-                     Update (This.R (3), It);
-                     This.Push_Control (It);
+                     Update (This.R (1), It);
+                     This.Push (Control, It);
                      Changed := True;
                   end if;
 
                when Payload_C =>
-                  if This.Pop_Control (This.R (1 .. 3)) then
-                     This.Push (This.Right (This.R (1)));
+                  if This.Pop (Control, This.R (1 .. 3)) then
                      This.Push (This.Right (This.R (3)));
+                     This.Push (This.Right (This.R (1)));
                      This.Apply;
                      This.Push (This.Right (This.R (2)));
                      This.Apply;
                      It := This.Pop;
-                     Update (This.R (3), It);
-                     This.Push_Control (It);
+                     Update (This.R (1), It);
+                     This.Push (Control, It);
                      Changed := True;
                   end if;
 
@@ -326,43 +353,40 @@ package body Skit.Impl.Machines is
                         declare
                            Fn : constant Skit.Primitives.Abstraction'Class :=
                                   This.Prims (P);
-                           Arg_Count : constant Natural :=
-                                         Fn.Argument_Count;
-                           Args      : Object_Array renames
-                                         This.R (1 .. Arg_Count);
-                           Arg       : Object;
                         begin
-                           if This.Pop_Control (Args) then
-                              This.Push (Args (Arg_Count));
-                              This.Push (Args);
-                              for I in reverse 1 .. Arg_Count loop
-                                 This.Push (This.Right (This.Pop));
-                                 if not Fn.Is_Lazy (I) then
-                                    This.Evaluate;
-                                 end if;
-                                 Arg := This.Pop;
-                                 if Trace then
-                                    Ada.Text_IO.Put_Line
-                                      ("arg" & Integer'Image (-I)
-                                       & ": "
-                                       & Debug.Image (Arg, This'Access));
-                                 end if;
-                                 This.SS := This.Core.Allocate (Arg, This.SS);
-                              end loop;
-                              for R of Args loop
-                                 R := This.Left (This.SS);
-                                 This.SS := This.Right (This.SS);
-                              end loop;
-                              It := Fn.Evaluate (Args);
-                              declare
-                                 L : constant Object := This.Pop;
-                              begin
-                                 This.Set_Left (L, I);
-                                 This.Set_Right (L, It);
-                              end;
-                              This.Push_Control (It);
-                              Changed := True;
+                           if Trace then
+                              Ada.Text_IO.Put_Line
+                                ("prim: " & Fn.Name);
                            end if;
+
+                           for I in 1 .. Fn.Argument_Count loop
+                              declare
+                                 A : constant Object :=
+                                       This.Right (This.Pop (Control));
+                              begin
+                                 This.Reset_State (A);
+                                 This.Evaluate;
+                                 This.Restore_State (This.Top);
+                                 This.Push (Secondary_Stack, This.Pop);
+                              end;
+                           end loop;
+
+                           if Trace then
+                              Ada.Text_IO.Put_Line
+                                ("args "
+                                 & Debug.Image
+                                   (This.Internal (Secondary_Stack),
+                                    This'Access));
+                           end if;
+
+                           for I in 1 .. Fn.Argument_Count loop
+                              This.Push (This.Pop (Secondary_Stack));
+                           end loop;
+
+                           Fn.Evaluate (This);
+                           This.Push (Control, This.Pop);
+
+                           Changed := True;
                         end;
                      end if;
                   end;
@@ -377,14 +401,11 @@ package body Skit.Impl.Machines is
       declare
          Count : Natural := 0;
       begin
-         while This.Control /= Nil loop
-            This.Push (This.Core.Right (This.Pop_Control));
+         while This.Internal (Control) /= Nil loop
+            This.Push (This.Core.Right (This.Pop (Control)));
             This.Apply;
             Count := Count + 1;
          end loop;
-         --  for I in 1 .. Count loop
-         --     This.Apply;
-         --  end loop;
       end;
 
    end Evaluate_Application;
@@ -398,9 +419,9 @@ package body Skit.Impl.Machines is
       Set  : not null access procedure (Marked_Object : in out Object))
    is
    begin
-      Set (This.Stack);
-         Set (This.Control);
-         Set (This.SS);
+      for R of This.Internal loop
+         Set (R);
+      end loop;
       for R of This.R loop
          Set (R);
       end loop;
@@ -421,7 +442,21 @@ package body Skit.Impl.Machines is
       Values : out Object_Array)
       return Boolean
    is
-      S : Object := This.Stack;
+   begin
+      return This.Pop (Stack, Values);
+   end Pop;
+
+   ---------
+   -- Pop --
+   ---------
+
+   function Pop
+     (This   : in out Instance'Class;
+      Stack  : Internal_Register;
+      Values : out Object_Array)
+      return Boolean
+   is
+      S : Object := This.Internal (Stack);
    begin
       for I in reverse 1 .. Values'Length loop
          if S = Nil then
@@ -431,48 +466,27 @@ package body Skit.Impl.Machines is
          S := This.Core.Right (S);
       end loop;
       Values := This.Locals (1 .. Values'Length);
-      This.Stack := S;
+      This.Internal (Stack) := S;
       This.Locals := [others => Nil];
       return True;
    end Pop;
 
-   -----------------
-   -- Pop_Control --
-   -----------------
+   ---------
+   -- Pop --
+   ---------
 
-   function Pop_Control
+   function Pop
      (This   : in out Instance'Class;
-      Values : out Object_Array)
-      return Boolean
-   is
-      S : Object := This.Control;
-   begin
-      for I in 1 .. Values'Length loop
-         if S = Nil then
-            return False;
-         end if;
-         Values (I) := This.Core.Left (S);
-         S := This.Core.Right (S);
-      end loop;
-      This.Control := S;
-      return True;
-   end Pop_Control;
-
-   -----------------
-   -- Pop_Control --
-   -----------------
-
-   function Pop_Control
-     (This   : in out Instance'Class)
+      Stack  : Internal_Register)
       return Object
    is
       V : Object_Array (1 .. 1);
    begin
-      if not This.Pop_Control (V) then
-         raise Constraint_Error with "Control stack empty";
+      if not This.Pop (Stack, V) then
+         raise Constraint_Error with "empty stack: " & Stack'Image;
       end if;
       return V (1);
-   end Pop_Control;
+   end Pop;
 
    ----------
    -- Push --
@@ -483,26 +497,86 @@ package body Skit.Impl.Machines is
       Values : in out Object_Array)
    is
    begin
+      This.Push (Stack, Values);
+   end Push;
+
+   ----------
+   -- Push --
+   ----------
+
+   procedure Push
+     (This   : in out Instance'Class;
+      Stack  : Internal_Register;
+      Values : in out Object_Array)
+   is
+   begin
       This.Locals (1 .. Values'Length) := Values;
       for V of This.Locals (1 .. Values'Length) loop
-         This.Stack := This.Core.Allocate (V, This.Stack);
+         This.Internal (Stack) :=
+           This.Core.Allocate (V, This.Internal (Stack));
       end loop;
       Values := This.Locals (1 .. Values'Length);
       This.Locals := [others => Nil];
    end Push;
 
-   ------------------
-   -- Push_Control --
-   ------------------
+   ----------
+   -- Push --
+   ----------
 
-   procedure Push_Control
+   procedure Push
      (This  : in out Instance'Class;
+      Stack : Internal_Register;
       Value : Object)
    is
       T : Object := Value;
    begin
-      This.Control := This.Core.Allocate (T, This.Control);
-   end Push_Control;
+      This.Internal (Stack) := This.Core.Allocate (T, This.Internal (Stack));
+   end Push;
+
+   ------------
+   -- Report --
+   ------------
+
+   overriding procedure Report
+     (This : Instance)
+   is
+   begin
+      This.Core.Report;
+   end Report;
+
+   -----------------
+   -- Reset_State --
+   -----------------
+
+   procedure Reset_State
+     (This      : in out Instance'Class;
+      Stack_Top : Object)
+   is
+   begin
+      This.Push (Dump, This.Internal (Control));
+      This.Push (Dump, This.Internal (Secondary_Stack));
+      This.Push (Dump, This.Internal (Stack));
+      This.Internal (Control) := Nil;
+      This.Internal (Secondary_Stack) := Nil;
+      This.Internal (Control) := Nil;
+      This.Push (Stack, Stack_Top);
+   end Reset_State;
+
+   -------------------
+   -- Restore_State --
+   -------------------
+
+   procedure Restore_State
+     (This      : in out Instance'Class;
+      Stack_Top : Object)
+   is
+   begin
+      This.R (1) := Stack_Top;
+      This.Internal (Stack) := This.Pop (Dump);
+      This.Push (Stack, This.R (1));
+      This.Internal (Secondary_Stack) := This.Pop (Dump);
+      This.Internal (Control) := This.Pop (Dump);
+   end Restore_State;
 
    ---------
    -- Set --
@@ -542,5 +616,30 @@ package body Skit.Impl.Machines is
    begin
       This.Core.Set_Right (App, To);
    end Set_Right;
+
+   ---------
+   -- Top --
+   ---------
+
+   overriding function Top
+     (This   : Instance)
+      return Object
+   is
+   begin
+      return This.Top (Stack);
+   end Top;
+
+   ---------
+   -- Top --
+   ---------
+
+   function Top
+     (This   : Instance'Class;
+      Stack  : Internal_Register)
+      return Object
+   is
+   begin
+      return This.Core.Left (This.Internal (Stack));
+   end Top;
 
 end Skit.Impl.Machines;

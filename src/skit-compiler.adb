@@ -1,11 +1,6 @@
-with Ada.Text_IO;
-with Skit.Debug;
-
 package body Skit.Compiler is
 
    Do_Opt : constant Boolean := True;
-   Trace  : constant Boolean := False;
-
    Indent : Natural := 0;
 
    procedure Abstract_Variable
@@ -24,13 +19,7 @@ package body Skit.Compiler is
       Variable : Object)
    is
       Top : constant Object := Machine.Pop;
-      Spaces : constant String (1 .. Indent) := [others => ' '];
    begin
-      if Trace then
-         Ada.Text_IO.Put_Line (Spaces & "A" & Debug.Image (Variable)
-                               & "{ " & Debug.Image (Top, Machine));
-      end if;
-
       Indent := Indent + 2;
       case Top.Tag is
          when Application_Object =>
@@ -64,9 +53,6 @@ package body Skit.Compiler is
             end if;
       end case;
       Indent := Indent - 2;
-      if Trace then
-         Ada.Text_IO.Put_Line (Spaces & Machine.Show_Top & "}");
-      end if;
    end Abstract_Variable;
 
    -------------
@@ -77,12 +63,7 @@ package body Skit.Compiler is
      (Machine : Skit.Machine.Reference)
    is
       Top : constant Object := Machine.Top;
-      Spaces : constant String (1 .. Indent) := [others => ' '];
    begin
-      if Trace then
-         Ada.Text_IO.Put_Line (Spaces & "C{ " & Debug.Image (Top, Machine));
-      end if;
-
       Indent := Indent + 2;
       case Top.Tag is
          when Integer_Object =>
@@ -120,9 +101,6 @@ package body Skit.Compiler is
             null;
       end case;
       Indent := Indent - 2;
-      if Trace then
-         Ada.Text_IO.Put_Line (Spaces & Machine.Show_Top & "}");
-      end if;
    end Compile;
 
    --------------
@@ -151,14 +129,8 @@ package body Skit.Compiler is
             (if Is_S
              then Machine.Right (Top)
              else Nil);
-      Spaces : constant String (1 .. Indent) := [others => ' '];
    begin
       if Is_S then
-         if Trace then
-            Ada.Text_IO.Put
-              (Spaces & "OPT " & Machine.Show_Top);
-         end if;
-
          if Is_App_K (X) then
             if Is_App_K (Y) then
                Machine.Set (0, App_K (X));
@@ -192,11 +164,6 @@ package body Skit.Compiler is
                Machine.Apply;
                Machine.Push (Machine.Get (1));
                Machine.Apply;
-         end if;
-
-         if Trace then
-            Ada.Text_IO.Put_Line
-              (" ==> " & Machine.Show_Top);
          end if;
       end if;
    end Optimise;

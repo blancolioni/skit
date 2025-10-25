@@ -1,4 +1,4 @@
-package Skit.Marks is
+package Skit.Containers is
 
    type Abstraction is interface;
 
@@ -7,4 +7,4 @@ package Skit.Marks is
       Set  : not null access procedure (Marked_Object : in out Object))
    is abstract;
 
-end Skit.Marks;
+end Skit.Containers;

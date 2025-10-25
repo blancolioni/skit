@@ -43,12 +43,12 @@ package body Skit.Debug is
                   return "\";
                when Primitive_Variable_Payload =>
                   declare
-                     S : String :=
-                           Object_Payload'Image
-                             (X.Payload - Primitive_Variable_Payload'First);
+                     Ch : constant Character :=
+                            Character'Val
+                              (X.Payload - Primitive_Variable_Payload'First
+                               + Character'Pos ('a'));
                   begin
-                     S (1) := '_';
-                     return S;
+                     return [Ch];
                   end;
                when others =>
                   return "<"

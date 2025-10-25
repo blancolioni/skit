@@ -21,6 +21,10 @@ package Skit is
    function To_Object (X : Integer) return Object;
    function To_Object (X : Float) return Object;
 
+   type Variable_Index is range 1 .. 999;
+
+   function To_Variable_Object (Index : Variable_Index) return Object;
+
 private
 
    type Object_Payload is mod 2 ** Payload_Size;
@@ -62,5 +66,9 @@ private
 
    function To_Integer (X : Object) return Integer;
    function To_Float (X : Object) return Float;
+
+   function To_Variable_Object (Index : Variable_Index) return Object
+   is (Object_Payload (Index) + Primitive_Variable_Payload'First,
+       Primitive_Object);
 
 end Skit;

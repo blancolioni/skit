@@ -1,5 +1,8 @@
 with Ada.Calendar;
+with Ada.Containers.Doubly_Linked_Lists;
+with Ada.Text_IO;
 
+with Skit.Containers;
 with Skit.Exceptions;
 
 package body Skit.Impl.Memory is
@@ -13,26 +16,34 @@ package body Skit.Impl.Memory is
 
    type Cell_Array is array (Cell_Address range <>) of Cell_Type;
 
-   type Marks_Reference is access all Skit.Marks.Abstraction'Class;
+   type Container_Reference is access all Skit.Containers.Abstraction'Class;
+   package Container_Lists is
+      new Ada.Containers.Doubly_Linked_Lists (Container_Reference);
 
    subtype Parent is Skit.Allocator.Abstraction;
    type Instance (Last : Cell_Address) is new Parent with
       record
-         Core        : Cell_Array (0 .. Last);
-         Top         : Cell_Address;
-         Free        : Cell_Address;
-         From_Space  : Cell_Address;
-         To_Space    : Cell_Address;
-         Space_Size  : Cell_Address;
-         Scan        : Cell_Address;
-         Marks       : Marks_Reference;
-         Alloc_Left  : Object;
-         Alloc_Right : Object;
-         Alloc_Count : Natural := 0;
-         Reclaimed   : Natural := 0;
-         GC_Time     : Duration := 0.0;
-         GC_Count    : Natural := 0;
+         Core              : Cell_Array (0 .. Last);
+         Top               : Cell_Address;
+         Free              : Cell_Address;
+         From_Space        : Cell_Address;
+         To_Space          : Cell_Address;
+         Space_Size        : Cell_Address;
+         Scan              : Cell_Address;
+         Containers        : Container_Lists.List;
+         Alloc_Left        : Object;
+         Alloc_Right       : Object;
+         Alloc_Count       : Natural := 0;
+         Active_Cells      : Natural := 0;
+         Total_Alloc_Count : Natural := 0;
+         Reclaimed         : Natural := 0;
+         GC_Time           : Duration := 0.0;
+         GC_Count          : Natural := 0;
       end record;
+
+   overriding procedure Add_Container
+     (This      : in out Instance;
+      Container : not null access Skit.Containers.Abstraction'Class);
 
    overriding function Allocate
      (This   : in out Instance;
@@ -59,6 +70,8 @@ package body Skit.Impl.Memory is
      (This : in out Instance;
       App  : Object;
       To   : Object);
+
+   overriding procedure Report (This : Instance);
 
    function In_From_Space
      (This   : Instance'Class;
@@ -89,6 +102,18 @@ package body Skit.Impl.Memory is
    procedure GC
      (This : in out Instance'Class);
 
+   -------------------
+   -- Add_Container --
+   -------------------
+
+   overriding procedure Add_Container
+     (This      : in out Instance;
+      Container : not null access Skit.Containers.Abstraction'Class)
+   is
+   begin
+      This.Containers.Append (Container_Reference (Container));
+   end Add_Container;
+
    --------------
    -- Allocate --
    --------------
@@ -110,12 +135,13 @@ package body Skit.Impl.Memory is
          end if;
       end if;
 
-      return Result : constant Object :=
+      return Result         : constant Object :=
         (This.Free, Application_Object)
       do
          This.Core (This.Free) := (This.Alloc_Left, This.Alloc_Right);
          This.Free := This.Free + 1;
          This.Alloc_Count := This.Alloc_Count + 1;
+         This.Total_Alloc_Count := @ + 1;
       end return;
    end Allocate;
 
@@ -140,8 +166,7 @@ package body Skit.Impl.Memory is
    ------------
 
    function Create
-     (Core_Size  : Positive;
-      Marks      : not null access Skit.Marks.Abstraction'Class)
+     (Core_Size  : Positive)
       return Skit.Allocator.Reference
    is
       Top_Address : constant Cell_Address := Cell_Address (Core_Size - 1);
@@ -150,23 +175,15 @@ package body Skit.Impl.Memory is
       From_Space  : constant Cell_Address := Space_Size;
 
       Mem : constant Skit.Allocator.Reference :=
-                      new Instance'
-                        (Last        => Top_Address,
-                         Marks       => Marks,
-                         Core        => <>,
-                         Top         => To_Space + Space_Size,
-                         Free        => To_Space,
-                         From_Space  => From_Space,
-                         To_Space    => To_Space,
-                         Space_Size  => Space_Size,
-                         Scan        => 0,
-                         Alloc_Left  => Nil,
-                         Alloc_Right => Nil,
-                         Alloc_Count => 0,
-                         Reclaimed   => 0,
-                         GC_Time     => 0.0,
-                         GC_Count    => 0);
-
+              new Instance'
+                (Last              => Top_Address,
+                 Core              => <>,
+                 Top               => To_Space + Space_Size,
+                 Free              => To_Space,
+                 From_Space        => From_Space,
+                 To_Space          => To_Space,
+                 Space_Size        => Space_Size,
+                 others            => <>);
    begin
       return Mem;
    end Create;
@@ -196,7 +213,6 @@ package body Skit.Impl.Memory is
       Start           : constant Time := Clock;
       Old_Alloc_Count : constant Natural := This.Alloc_Count;
    begin
-
       This.Flip;
 
       This.Mark (This.Alloc_Left);
@@ -215,7 +231,9 @@ package body Skit.Impl.Memory is
          end Set;
 
       begin
-         This.Marks.Mark (Set'Access);
+         for Container of This.Containers loop
+            Container.Mark (Set'Access);
+         end loop;
       end;
 
       while This.Scan < This.Free loop
@@ -230,10 +248,10 @@ package body Skit.Impl.Memory is
       end loop;
 
       This.Alloc_Count := Natural (This.Scan - This.To_Space);
+      This.Active_Cells := This.Alloc_Count;
       This.Reclaimed := @ + Old_Alloc_Count - This.Alloc_Count;
       This.GC_Time := @ + Clock - Start;
       This.GC_Count := @ + 1;
-
    end GC;
 
    -------------------
@@ -320,6 +338,38 @@ package body Skit.Impl.Memory is
       end;
 
    end Move;
+
+   ------------
+   -- Report --
+   ------------
+
+   overriding procedure Report (This : Instance) is
+   begin
+      Ada.Text_IO.Put_Line
+        ("Total number of cells:"
+         & Cell_Address'Image (This.Core'Length / 2));
+      Ada.Text_IO.Put_Line
+        ("Allocated cell count: "
+         & Cell_Address'Image (This.Free - This.To_Space));
+      Ada.Text_IO.Put_Line
+        ("Free cell count: "
+         & Cell_Address'Image (This.Top - This.Free));
+      Ada.Text_IO.Put_Line
+        ("Active cell count: "
+         & This.Active_Cells'Image);
+      Ada.Text_IO.Put_Line
+        ("GC:"
+         & Natural'Image (This.GC_Count)
+         & " @"
+         & Natural'Image (Natural (This.GC_Time * 1000.0))
+         & "ms");
+      Ada.Text_IO.Put_Line
+        ("Allocated cells:"
+         & Natural'Image (This.Total_Alloc_Count));
+      Ada.Text_IO.Put_Line
+        ("Reclaimed cells:"
+         & Natural'Image (This.Reclaimed));
+   end Report;
 
    -----------
    -- Right --

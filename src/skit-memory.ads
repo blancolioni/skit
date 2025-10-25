@@ -1,3 +1,5 @@
+with Skit.Containers;
+
 package Skit.Memory is
 
    type Abstraction is interface;
@@ -26,5 +28,12 @@ package Skit.Memory is
       App  : Object;
       To   : Object)
    is abstract;
+
+   procedure Add_Container
+     (This      : in out Abstraction;
+      Container : not null access Skit.Containers.Abstraction'Class)
+   is abstract;
+
+   procedure Report (This : Abstraction) is abstract;
 
 end Skit.Memory;
