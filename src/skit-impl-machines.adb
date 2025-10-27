@@ -27,12 +27,21 @@ package body Skit.Impl.Machines is
 
    type Instance is new Parent and Skit.Containers.Abstraction with
       record
-         Core     : Skit.Allocator.Reference;
-         Internal : Internal_Register_Array := [others        => Nil];
-         R        : Object_Array (Register);
-         Locals   : Object_Array (1 .. Max_Locals) := [others => Nil];
-         Temps    : Temporary_Array := [others => Nil];
-         Prims    : Primitive_Function_Vectors.Vector;
+         Core       : Skit.Allocator.Reference;
+         Internal   : Internal_Register_Array := [others        => Nil];
+         R          : Object_Array (Register);
+         Locals     : Object_Array (1 .. Max_Locals) := [others => Nil];
+         Temps      : Temporary_Array := [others => Nil];
+         Prims      : Primitive_Function_Vectors.Vector;
+         Reductions : Natural := 0;
+         R_I        : Natural := 0;
+         R_K        : Natural := 0;
+         R_S        : Natural := 0;
+         R_B        : Natural := 0;
+         R_C        : Natural := 0;
+         R_Sp       : Natural := 0;
+         R_Bs       : Natural := 0;
+         R_Cp       : Natural := 0;
       end record;
    type Reference is access all Instance'Class;
 
@@ -278,6 +287,7 @@ package body Skit.Impl.Machines is
          end if;
 
          if It.Tag = Primitive_Object then
+            This.Reductions := This.Reductions + 1;
             case It.Payload is
                when Payload_I =>
                   declare
@@ -287,6 +297,7 @@ package body Skit.Impl.Machines is
                         It := This.Core.Right (X (1));
                         This.Push (Control, It);
                         Changed := True;
+                        This.R_I := @ + 1;
                      end if;
                   end;
 
@@ -299,6 +310,7 @@ package body Skit.Impl.Machines is
                         Update (X (1), It);
                         This.Push (Control, It);
                         Changed := True;
+                        This.R_K := @ + 1;
                      end if;
                   end;
 
@@ -315,6 +327,7 @@ package body Skit.Impl.Machines is
                      Update (This.R (1), It);
                      This.Push (Control, It);
                      Changed := True;
+                     This.R_S := @ + 1;
                   end if;
 
                when Payload_B =>
@@ -328,6 +341,7 @@ package body Skit.Impl.Machines is
                      Update (This.R (1), It);
                      This.Push (Control, It);
                      Changed := True;
+                     This.R_B := @ + 1;
                   end if;
 
                when Payload_C =>
@@ -341,6 +355,57 @@ package body Skit.Impl.Machines is
                      Update (This.R (1), It);
                      This.Push (Control, It);
                      Changed := True;
+                     This.R_C := @ + 1;
+                  end if;
+
+               when Payload_S_Prime =>
+                  if This.Pop (Control, This.R (1 .. 4)) then
+                     This.Push (This.Right (This.R (4)));
+                     This.Push (This.Right (This.R (3)));
+                     This.Push (This.Right (This.R (1)));
+                     This.Apply;
+                     This.Apply;
+                     This.Push (This.Right (This.R (2)));
+                     This.Push (This.Right (This.R (1)));
+                     This.Apply;
+                     This.Apply;
+                     It := This.Pop;
+                     Update (This.R (1), It);
+                     This.Push (Control, It);
+                     Changed := True;
+                     This.R_Sp := @ + 1;
+                  end if;
+
+               when Payload_B_Star =>
+                  if This.Pop (Control, This.R (1 .. 4)) then
+                     This.Push (This.Right (This.R (4)));
+                     This.Push (This.Right (This.R (3)));
+                     This.Push (This.Right (This.R (2)));
+                     This.Push (This.Right (This.R (1)));
+                     This.Apply;
+                     This.Apply;
+                     This.Apply;
+                     It := This.Pop;
+                     Update (This.R (1), It);
+                     This.Push (Control, It);
+                     Changed := True;
+                     This.R_Bs := @ + 1;
+                  end if;
+
+               when Payload_C_Prime =>
+                  if This.Pop (Control, This.R (1 .. 4)) then
+                     This.Push (This.Right (This.R (4)));
+                     This.Push (This.Right (This.R (3)));
+                     This.Push (This.Right (This.R (1)));
+                     This.Apply;
+                     This.Apply;
+                     This.Push (This.Right (This.R (2)));
+                     This.Apply;
+                     It := This.Pop;
+                     Update (This.R (1), It);
+                     This.Push (Control, It);
+                     Changed := True;
+                     This.R_Cp := @ + 1;
                   end if;
 
                when Primitive_Function_Payload =>
@@ -536,6 +601,17 @@ package body Skit.Impl.Machines is
      (This : Instance)
    is
    begin
+      Ada.Text_IO.Put_Line ("reductions:" & This.Reductions'Image);
+      Ada.Text_IO.Put_Line
+        ("per combinator: "
+         & "I" & This.R_I'Image
+         & "; K" & This.R_K'Image
+         & "; S" & This.R_S'Image
+         & "; B" & This.R_B'Image
+         & "; C" & This.R_C'Image
+         & "; S'" & This.R_Sp'Image
+         & "; B*" & This.R_Bs'Image
+         & "; C'" & This.R_Cp'Image);
       This.Core.Report;
    end Report;
 

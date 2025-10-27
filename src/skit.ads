@@ -16,6 +16,9 @@ package Skit is
    I         : constant Object;
    C         : constant Object;
    B         : constant Object;
+   S_Prime   : constant Object;
+   B_Star    : constant Object;
+   C_Prime   : constant Object;
    Λ        : constant Object;
    Undefined : constant Object;
 
@@ -49,8 +52,11 @@ private
    Payload_I         : constant Object_Payload := 3;
    Payload_C         : constant Object_Payload := 4;
    Payload_B         : constant Object_Payload := 5;
-   Payload_Lambda    : constant Object_Payload := 6;
-   Payload_Undefined : constant Object_Payload := 7;
+   Payload_S_Prime   : constant Object_Payload := 6;
+   Payload_B_Star    : constant Object_Payload := 7;
+   Payload_C_Prime   : constant Object_Payload := 8;
+   Payload_Lambda    : constant Object_Payload := 9;
+   Payload_Undefined : constant Object_Payload := 10;
 
    Nil       : constant Object := (Payload_Nil, Primitive_Object);
    S         : constant Object := (Payload_S, Primitive_Object);
@@ -58,6 +64,9 @@ private
    I         : constant Object := (Payload_I, Primitive_Object);
    C         : constant Object := (Payload_C, Primitive_Object);
    B         : constant Object := (Payload_B, Primitive_Object);
+   S_Prime   : constant Object := (Payload_S_Prime, Primitive_Object);
+   B_Star    : constant Object := (Payload_B_Star, Primitive_Object);
+   C_Prime   : constant Object := (Payload_C_Prime, Primitive_Object);
    Λ         : constant Object := (Payload_Lambda, Primitive_Object);
    Undefined : constant Object := (Payload_Undefined, Primitive_Object);
 
