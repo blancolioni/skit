@@ -40,7 +40,15 @@ package body Skit.Debug is
                when 5 =>
                   return "B";
                when 6 =>
+                  return "S'";
+               when 7 =>
+                  return "B*";
+               when 8 =>
+                  return "C'";
+               when 9 =>
                   return "\";
+               when 10 =>
+                  return "*undefined*";
                when Primitive_Variable_Payload =>
                   declare
                      Ch : constant Character :=
