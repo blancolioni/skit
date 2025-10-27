@@ -35,6 +35,7 @@ package body Skit.Impl.Memory is
          Alloc_Right       : Object;
          Alloc_Count       : Natural := 0;
          Active_Cells      : Natural := 0;
+         Max_Active_Cells  : Natural := 0;
          Total_Alloc_Count : Natural := 0;
          Reclaimed         : Natural := 0;
          GC_Time           : Duration := 0.0;
@@ -248,6 +249,7 @@ package body Skit.Impl.Memory is
       end loop;
 
       This.Alloc_Count := Natural (This.Scan - This.To_Space);
+      This.Max_Active_Cells := Natural'Max (@, This.Alloc_Count);
       This.Active_Cells := This.Alloc_Count;
       This.Reclaimed := @ + Old_Alloc_Count - This.Alloc_Count;
       This.GC_Time := @ + Clock - Start;
@@ -355,8 +357,11 @@ package body Skit.Impl.Memory is
         ("Free cell count: "
          & Cell_Address'Image (This.Top - This.Free));
       Ada.Text_IO.Put_Line
-        ("Active cell count: "
-         & This.Active_Cells'Image);
+        ("Active cell count:"
+         & This.Active_Cells'Image
+         & "; max:"
+         & This.Max_Active_Cells'Image);
+
       Ada.Text_IO.Put_Line
         ("GC:"
          & Natural'Image (This.GC_Count)

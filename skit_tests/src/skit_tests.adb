@@ -84,6 +84,12 @@ begin
    Test ("fac 5", 120);
    Test ("gcd 35 5", 5);
    Test ("gcd 122 12", 2);
-   Test ("putChar 1 955", 2);
+   Test ("putChar 1 1 955", 2);
+   Test ("head str", 66);
+   Test ("head (tail str)", 67);
+   Test ("null nil 1 2", 1);
+   Test ("null str 1 2", 2);
+   Test ("null (cons 13 14) 1 2", 2);
+
    Report;
 end Skit_Tests;

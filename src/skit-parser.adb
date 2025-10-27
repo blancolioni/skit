@@ -1,3 +1,5 @@
+with Skit.Compiler;
+
 package body Skit.Parser is
 
    -----------
@@ -146,6 +148,7 @@ package body Skit.Parser is
             Name : constant String := Parse_Id;
          begin
             Parse_Expression;
+            Skit.Compiler.Compile (Machine);
             Bind_Value (Name);
          end;
       else

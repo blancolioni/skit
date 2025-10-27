@@ -55,7 +55,13 @@ package body Skit.Tests is
                 "!count Y (\f.\n.zero n 0 (f (- n 1)))",
                 "!fac Y (\f.\n.zero n 1 (* n (f (- n 1))))",
                 "!gcd Y (\f.\a.\b.if (zero b) a (f b (mod a b)))",
-                "!rec Y (\f.\x.eq x 0 22 (f (pred x)))"
+                "!rec Y (\f.\x.eq x 0 22 (f (pred x)))",
+                "!str \x.\y.y 66 (\x.\y.y 67 (\x.\y.x))",
+                "!head \v.v K (\x.\y.x)",
+                "!tail \v.v K (\x.\y.y)",
+                "!cons \x.\y.\a.\b.b x y",
+                "!nil \a.\b.a",
+                "!null \x.x true (\x.\y.false)"
                ];
 
    ----------------
@@ -125,7 +131,7 @@ package body Skit.Tests is
       end To_Object;
 
    begin
-      Machine := Skit.Impl.Machine (4 * 1024);
+      Machine := Skit.Impl.Machine (8 * 1024);
       Env     := Skit.Environment.Create (Machine);
       Skit.Library.Load_Standard_Library (Env);
 

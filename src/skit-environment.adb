@@ -39,6 +39,32 @@ package body Skit.Environment is
       end if;
    end Bind;
 
+   ----------
+   -- Bind --
+   ----------
+
+   procedure Bind
+     (This  : in out Instance;
+      Name  : String;
+      Blob  : not null access Skit.Interfaces.Abstraction'Class)
+   is
+   begin
+      This.Blobs.Insert (Name, Skit.Interfaces.Reference (Blob));
+   end Bind;
+
+   ----------
+   -- Blob --
+   ----------
+
+   function Blob
+     (This : Instance;
+      Name : String)
+      return Skit.Interfaces.Reference
+   is
+   begin
+      return This.Blobs.Element (Name);
+   end Blob;
+
    ------------
    -- Create --
    ------------
