@@ -93,7 +93,7 @@ package body Skit.Debug is
       function Img (X : Object) return String is
       begin
          if X.Tag = Application_Object then
-            if Core.Left (X) = λ then
+            if Core.Left (X) = Lambda then
                return "(\" & Img (Core.Left (Core.Right (X)))
                  & "." & Img (Core.Right (Core.Right (X)))
                  & ")";

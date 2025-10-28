@@ -71,7 +71,7 @@ package body Skit.Compiler is
          when Primitive_Object =>
             null;
          when Application_Object =>
-            if Machine.Left (Top) = λ then
+            if Machine.Left (Top) = Lambda then
                declare
                   Variable : constant Object :=
                                Machine.Left (Machine.Right (Top));

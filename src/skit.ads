@@ -19,7 +19,7 @@ package Skit is
    S_Prime   : constant Object;
    B_Star    : constant Object;
    C_Prime   : constant Object;
-   Λ        : constant Object;
+   Lambda    : constant Object;
    Undefined : constant Object;
 
    function To_Object (X : Integer) return Object;
@@ -67,7 +67,7 @@ private
    S_Prime   : constant Object := (Payload_S_Prime, Primitive_Object);
    B_Star    : constant Object := (Payload_B_Star, Primitive_Object);
    C_Prime   : constant Object := (Payload_C_Prime, Primitive_Object);
-   Λ         : constant Object := (Payload_Lambda, Primitive_Object);
+   Lambda    : constant Object := (Payload_Lambda, Primitive_Object);
    Undefined : constant Object := (Payload_Undefined, Primitive_Object);
 
    subtype Primitive_Function_Payload is
