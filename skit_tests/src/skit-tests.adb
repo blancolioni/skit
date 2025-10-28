@@ -1,5 +1,3 @@
-with Ada.Containers.Indefinite_Doubly_Linked_Lists;
-with Ada.Containers.Indefinite_Vectors;
 with Ada.Text_IO;
 
 with Skit.Compiler;
@@ -8,7 +6,6 @@ with Skit.Environment;
 with Skit.Impl;
 with Skit.Library;
 with Skit.Machine;
-with Skit.Parser;
 with Skit.Stacks;
 
 package body Skit.Tests is
@@ -17,12 +14,6 @@ package body Skit.Tests is
    Env     : Skit.Environment.Reference;
 
    Total, Pass, Fail : Natural := 0;
-
-   package Variable_Vectors is
-     new Ada.Containers.Indefinite_Vectors (Natural, String);
-
-   package Source_Lists is
-     new Ada.Containers.Indefinite_Doubly_Linked_Lists (String);
 
    ----------
    -- Test --
@@ -34,112 +25,15 @@ package body Skit.Tests is
       Expected   : Object;
       Compile    : Boolean);
 
-   Vrbs    : Variable_Vectors.Vector;
-
-   Prelude : constant Source_Lists.List :=
-               ["!id \x.x",
-                "!false \x.\y.y",
-                "!true \x.\y.x",
-                "!if \c.\t.\f.c t f",
-                "!Y S S I (C B (S I I))",
-                "!succ \x.+ x 1",
-                "!pred \x.- x 1",
-                "!not \x.if x false true",
-                "!and \x.\y.if x y false",
-                "!or \x.\y.if x true Y",
-                "!lt \x.\y.and (le x y) (not (eq x y))",
-                "!gt \x.\y.not (le x y)",
-                "!ge \x.\y.not (lt x y)",
-                "!ne \x.\y.not (eq x y)",
-                "!zero \x.eq x 0 true false",
-                "!count Y (\f.\n.zero n 0 (f (- n 1)))",
-                "!fac Y (\f.\n.zero n 1 (* n (f (- n 1))))",
-                "!gcd Y (\f.\a.\b.if (zero b) a (f b (mod a b)))",
-                "!rec Y (\f.\x.eq x 0 22 (f (pred x)))",
-                "!str \x.\y.y 66 (\x.\y.y 67 (\x.\y.x))",
-                "!head \v.v K (\x.\y.x)",
-                "!tail \v.v K (\x.\y.y)",
-                "!cons \x.\y.\a.\b.b x y",
-                "!nil \a.\b.a",
-                "!null \x.x true (\x.\y.false)"
-               ];
-
    ----------------
    -- Initialize --
    ----------------
 
    procedure Initialize is
-
-      function To_Object (Tok : String) return Skit.Object;
-      procedure Bind_Value (Name : String);
-
-      ----------------
-      -- Bind_Value --
-      ----------------
-
-      procedure Bind_Value (Name : String) is
-      begin
-         Env.Bind (Name, Machine.Pop);
-      end Bind_Value;
-
-      ---------------
-      -- To_Object --
-      ---------------
-
-      function To_Object (Tok : String) return Skit.Object is
-      begin
-         if (for all Ch of Tok => Ch in '0' .. '9') then
-            return To_Object (Natural'Value (Tok));
-         elsif Tok = "I" then
-            return Skit.I;
-         elsif Tok = "S" then
-            return Skit.S;
-         elsif Tok = "K" then
-            return Skit.K;
-         elsif Tok = "B" then
-            return Skit.B;
-         elsif Tok = "C" then
-            return Skit.C;
-         else
-            declare
-               Value : constant Object := Env.Lookup (Tok);
-            begin
-               if Value /= Undefined then
-                  Ada.Text_IO.Put_Line
-                    (Tok & ": " & Skit.Debug.Image (Value, Machine));
-                  return Value;
-               end if;
-            end;
-
-            declare
-               use Variable_Vectors;
-               Position : constant Cursor :=
-                            Vrbs.Find (Tok);
-            begin
-               if Has_Element (Position) then
-                  return (Primitive_Variable_Payload'First
-                          + Object_Payload (To_Index (Position)),
-                          Primitive_Object);
-               else
-                  Vrbs.Append (Tok);
-                  return (Primitive_Variable_Payload'First
-                          + Object_Payload (Vrbs.Last_Index),
-                          Primitive_Object);
-               end if;
-            end;
-         end if;
-      end To_Object;
-
    begin
       Machine := Skit.Impl.Machine (8 * 1024);
       Env     := Skit.Environment.Create (Machine);
       Skit.Library.Load_Standard_Library (Env);
-
-      for Decl of Prelude loop
-         Skit.Parser.Parse
-           (Decl, To_Object'Access, Bind_Value'Access, Machine);
-      end loop;
-
    end Initialize;
 
    ------------
@@ -226,81 +120,9 @@ package body Skit.Tests is
      (Source   : String;
       Expected : Object)
    is
-      function To_Object (Tok : String) return Skit.Object;
-      procedure Bind_Value (Name : String);
-
-      ----------------
-      -- Bind_Value --
-      ----------------
-
-      procedure Bind_Value (Name : String) is
-      begin
-         --  Skit.Compiler.Compile (Machine);
-         Env.Bind (Name, Machine.Pop);
-
-         --  declare
-         --     Rec : constant Binding_Record :=
-         --             (Name'Length, Name, Machine.Pop);
-         --  begin
-         --     if Trace then
-         --        Ada.Text_IO.Put_Line
-         --          (Name & " <- " & Debug.Image (Rec.Value, Machine));
-         --     end if;
-         --     Env.List.Append (Rec);
-         --  end;
-      end Bind_Value;
-
-      ---------------
-      -- To_Object --
-      ---------------
-
-      function To_Object (Tok : String) return Skit.Object is
-      begin
-         if (for all Ch of Tok => Ch in '0' .. '9') then
-            return To_Object (Natural'Value (Tok));
-         elsif Tok = "I" then
-            return Skit.I;
-         elsif Tok = "S" then
-            return Skit.S;
-         elsif Tok = "K" then
-            return Skit.K;
-         elsif Tok = "B" then
-            return Skit.B;
-         elsif Tok = "C" then
-            return Skit.C;
-         else
-            declare
-               Value : constant Object := Env.Lookup (Tok);
-            begin
-               if Value /= Undefined then
-                  return Value;
-               end if;
-            end;
-
-            declare
-               use Variable_Vectors;
-               Position : constant Cursor :=
-                            Vrbs.Find (Tok);
-            begin
-               if Has_Element (Position) then
-                  return (Primitive_Variable_Payload'First
-                          + Object_Payload (To_Index (Position)),
-                          Primitive_Object);
-               else
-                  Vrbs.Append (Tok);
-                  return (Primitive_Variable_Payload'First
-                          + Object_Payload (Vrbs.Last_Index),
-                          Primitive_Object);
-               end if;
-            end;
-         end if;
-      end To_Object;
-
    begin
       Total := @ + 1;
-      Skit.Parser.Parse (Source, To_Object'Access, Bind_Value'Access, Machine);
-      Skit.Compiler.Compile (Machine);
-      Machine.Evaluate;
+      Env.Evaluate (Source);
 
       declare
          Result : constant Skit.Object := Machine.Pop;

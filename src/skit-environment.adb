@@ -1,3 +1,10 @@
+with Ada.Containers.Indefinite_Vectors;
+with Ada.Strings.Fixed;
+with Ada.Text_IO;
+with Skit.Compiler;
+with Skit.Debug;
+with Skit.Parser;
+
 package body Skit.Environment is
 
    ----------
@@ -80,6 +87,121 @@ package body Skit.Environment is
          This.Machine.Add_Container (This);
       end return;
    end Create;
+
+   --------------
+   -- Evaluate --
+   --------------
+
+   procedure Evaluate
+     (This : in out Instance;
+      Expr : String)
+   is
+      package Variable_Vectors is
+        new Ada.Containers.Indefinite_Vectors (Natural, String);
+
+      Vrbs : Variable_Vectors.Vector;
+
+      function To_Object (Tok : String) return Skit.Object;
+      procedure Bind_Value (Name : String);
+
+      ----------------
+      -- Bind_Value --
+      ----------------
+
+      procedure Bind_Value (Name : String) is
+      begin
+         Ada.Text_IO.Put_Line
+           (Name & ": " & Skit.Debug.Image (This.Machine.Top, This.Machine));
+         This.Bind (Name, This.Machine.Pop);
+         This.Machine.Push (Nil);
+      end Bind_Value;
+
+      ---------------
+      -- To_Object --
+      ---------------
+
+      function To_Object (Tok : String) return Skit.Object is
+      begin
+         if (for all Ch of Tok => Ch in '0' .. '9') then
+            return To_Object (Natural'Value (Tok));
+         elsif Tok = "I" then
+            return Skit.I;
+         elsif Tok = "S" then
+            return Skit.S;
+         elsif Tok = "K" then
+            return Skit.K;
+         elsif Tok = "B" then
+            return Skit.B;
+         elsif Tok = "C" then
+            return Skit.C;
+         else
+            declare
+               Value : constant Object := This.Lookup (Tok);
+            begin
+               if Value /= Undefined then
+                  return Value;
+               end if;
+            end;
+
+            declare
+               use Variable_Vectors;
+               Position : constant Cursor :=
+                            Vrbs.Find (Tok);
+            begin
+               if Has_Element (Position) then
+                  return (Primitive_Variable_Payload'First
+                          + Object_Payload (To_Index (Position)),
+                          Primitive_Object);
+               else
+                  Vrbs.Append (Tok);
+                  return (Primitive_Variable_Payload'First
+                          + Object_Payload (Vrbs.Last_Index),
+                          Primitive_Object);
+               end if;
+            end;
+         end if;
+      end To_Object;
+   begin
+      Skit.Parser.Parse
+        (Expr, To_Object'Access, Bind_Value'Access, This.Machine);
+      Skit.Compiler.Compile (This.Machine);
+      This.Machine.Evaluate;
+   end Evaluate;
+
+   ----------
+   -- Load --
+   ----------
+
+   procedure Load
+     (This : in out Instance;
+      Path : String)
+   is
+      procedure Load_Line (Line : String);
+
+      ---------------
+      -- Load_Line --
+      ---------------
+
+      procedure Load_Line (Line : String) is
+      begin
+         This.Evaluate (Line);
+      end Load_Line;
+
+      use Ada.Text_IO;
+      File : File_Type;
+   begin
+      Open (File, In_File, Path);
+      while not End_Of_File (File) loop
+         declare
+            S : constant String :=
+                  Ada.Strings.Fixed.Trim (Get_Line (File), Ada.Strings.Both);
+         begin
+            if S /= "" then
+               Load_Line (S);
+            end if;
+         end;
+      end loop;
+   end Load;
 
    ------------
    -- Lookup --

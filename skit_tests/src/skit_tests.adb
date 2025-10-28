@@ -90,6 +90,9 @@ begin
    Test ("null nil 1 2", 1);
    Test ("null str 1 2", 2);
    Test ("null (cons 13 14) 1 2", 2);
-
+   Test ("sum (cons 1 (cons 2 (cons 3 nil)))", 6);
+   Test ("sum (map (* 2) (cons 1 (cons 2 (cons 3 nil))))", 12);
+   Test ("sum (map (putChar 1 1) (cons 65 (cons 66 (cons 67 (cons 10 nil)))))",
+         8);
    Report;
 end Skit_Tests;
