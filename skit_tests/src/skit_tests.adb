@@ -29,11 +29,11 @@ begin
          Skit.To_Object (3));
    Test_Compiler
      ("\x.x ==> I",
-      [Λ, Var (0), Var (0), Apply, Apply],
+      [Lambda, Var (0), Var (0), Apply, Apply],
       Skit.I);
    Test_Compiler
      ("(\x.+ x x) 5 ==> 10",
-      [Λ, Var (0), Plus, Var (0), Apply, Var (0), Apply, Apply, Apply,
+      [Lambda, Var (0), Plus, Var (0), Apply, Var (0), Apply, Apply, Apply,
        Int (5), Apply],
       Skit.To_Object (10));
    Test ("1", Skit.To_Object (1));
