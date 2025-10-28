@@ -1,6 +1,7 @@
 with Ada.Wide_Wide_Text_IO;
 with Skit.Interfaces;
 with Skit.Primitives;
+with Skit.Resources;
 with Skit.Stacks;
 
 package body Skit.Library is
@@ -190,6 +191,7 @@ package body Skit.Library is
       Bind ("putChar",
             Put_Char_Instance'
               (Env => Skit.Environment.Reference (Environment)));
+      Environment.Load (Skit.Resources.Resource_Path & "/Prelude.skit");
    end Load_Standard_Library;
 
    ---------------

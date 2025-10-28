@@ -14,6 +14,16 @@ package Skit.Environment is
      (Machine : Skit.Machine.Reference)
       return Reference;
 
+   procedure Load
+     (This : in out Instance;
+      Path : String);
+   --  load definitions and evaluate expressions from Path
+
+   procedure Evaluate
+     (This : in out Instance;
+      Expr : String);
+   --  Evaluate Expr and leave the result on top of the stack
+
    function Machine
      (This : Instance)
       return Skit.Machine.Reference;

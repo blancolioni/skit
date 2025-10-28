@@ -18,7 +18,9 @@ package body Skit.Parser is
       Ch    : Character := ' ';
 
       function At_End return Boolean
-      is (Index > Source'Last);
+      is (Index > Source'Last
+          or else (Index = Source'Last
+              and then Source (Index) = Character'Val (13)));
 
       function At_Expression return Boolean
       is (not At_End and then Ch /= ')');
