@@ -2,7 +2,6 @@ with Ada.Containers.Indefinite_Vectors;
 with Ada.Strings.Fixed;
 with Ada.Text_IO;
 with Skit.Compiler;
-with Skit.Debug;
 with Skit.Parser;
 
 package body Skit.Environment is
@@ -110,8 +109,6 @@ package body Skit.Environment is
 
       procedure Bind_Value (Name : String) is
       begin
-         Ada.Text_IO.Put_Line
-           (Name & ": " & Skit.Debug.Image (This.Machine.Top, This.Machine));
          This.Bind (Name, This.Machine.Pop);
          This.Machine.Push (Nil);
       end Bind_Value;

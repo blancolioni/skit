@@ -31,7 +31,7 @@ package body Skit.Tests is
 
    procedure Initialize is
    begin
-      Machine := Skit.Impl.Machine (8 * 1024);
+      Machine := Skit.Impl.Machine (16 * 1024);
       Env     := Skit.Environment.Create (Machine);
       Skit.Library.Load_Standard_Library (Env);
    end Initialize;

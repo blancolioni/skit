@@ -1,4 +1,6 @@
 with Ada.Wide_Wide_Text_IO;
+with Ada.Text_IO;
+with Skit.Debug;
 with Skit.Interfaces;
 with Skit.Primitives;
 with Skit.Resources;
@@ -62,7 +64,7 @@ package body Skit.Library is
    is (To_Integer (X) <= To_Integer (Y));
 
    function Predicate
-     (Op : Predicate_Op)
+     (Op   : Predicate_Op)
       return Skit.Primitives.Abstraction'Class;
 
    function Binary_Op
@@ -84,6 +86,21 @@ package body Skit.Library is
 
    overriding procedure Evaluate
      (This    : Put_Char_Instance;
+      Stack   : in out Skit.Stacks.Abstraction'Class);
+
+   type Trace_Instance is
+     new Skit.Primitives.Abstraction with
+      record
+         Env : Skit.Environment.Reference;
+      end record;
+
+   overriding function Argument_Count
+     (This : Trace_Instance)
+      return Natural
+   is (1);
+
+   overriding procedure Evaluate
+     (This    : Trace_Instance;
       Stack   : in out Skit.Stacks.Abstraction'Class);
 
    type IO_Instance is new Skit.Interfaces.Abstraction with
@@ -155,6 +172,15 @@ package body Skit.Library is
       Stack.Push (To_Object (To_Integer (World_Index) + 1));
    end Evaluate;
 
+   overriding procedure Evaluate
+     (This    : Trace_Instance;
+      Stack   : in out Skit.Stacks.Abstraction'Class)
+   is
+   begin
+      Ada.Text_IO.Put_Line
+        ("[TRACE] " & Skit.Debug.Image (Stack.Top, This.Env.Machine));
+   end Evaluate;
+
    ---------------------------
    -- Load_Standard_Library --
    ---------------------------
@@ -191,6 +217,9 @@ package body Skit.Library is
       Bind ("putChar",
             Put_Char_Instance'
               (Env => Skit.Environment.Reference (Environment)));
+      Bind ("trace",
+            Trace_Instance'
+              (Env => Skit.Environment.Reference (Environment)));
       Environment.Load (Skit.Resources.Resource_Path & "/Prelude.skit");
    end Load_Standard_Library;
 
@@ -199,7 +228,7 @@ package body Skit.Library is
    ---------------
 
    function Predicate
-     (Op : Predicate_Op)
+     (Op   : Predicate_Op)
       return Skit.Primitives.Abstraction'Class
    is
       This : constant Predicate_Instance :=

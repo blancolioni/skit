@@ -31,4 +31,10 @@ package Skit.Machine is
       return Object
    is abstract;
 
+   procedure Set
+     (This   : in out Abstraction;
+      Option : String;
+      Value  : String)
+   is abstract;
+
 end Skit.Machine;

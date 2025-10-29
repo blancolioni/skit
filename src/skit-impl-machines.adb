@@ -1,4 +1,5 @@
 with Ada.Containers.Indefinite_Vectors;
+with Ada.Strings.Equal_Case_Insensitive;
 with Ada.Text_IO;
 
 with Skit.Allocator;
@@ -8,8 +9,6 @@ with Skit.Containers;
 with Skit.Primitives;
 
 package body Skit.Impl.Machines is
-
-   Trace : constant Boolean := False;
 
    package Primitive_Function_Vectors is
      new Ada.Containers.Indefinite_Vectors
@@ -33,6 +32,7 @@ package body Skit.Impl.Machines is
          Locals     : Object_Array (1 .. Max_Locals) := [others => Nil];
          Temps      : Temporary_Array := [others => Nil];
          Prims      : Primitive_Function_Vectors.Vector;
+         Trace      : Boolean := False;
          Reductions : Natural := 0;
          R_I        : Natural := 0;
          R_K        : Natural := 0;
@@ -109,6 +109,11 @@ package body Skit.Impl.Machines is
       T     : Skit.Machine.Temporary)
       return Object
    is (This.Temps (T));
+
+   overriding procedure Set
+     (This   : in out Instance;
+      Option : String;
+      Value  : String);
 
    overriding procedure Report
      (This : Instance);
@@ -218,7 +223,7 @@ package body Skit.Impl.Machines is
    is
       X : constant Object := This.Pop;
    begin
-      if Trace then
+      if This.Trace then
          Ada.Text_IO.Put_Line
            ("evaluate: " & Debug.Image (X, This'Access) & " {");
       end if;
@@ -233,7 +238,7 @@ package body Skit.Impl.Machines is
             This.Push (Control, X);
             This.Evaluate_Application;
       end case;
-      if Trace then
+      if This.Trace then
          Ada.Text_IO.Put_Line
            ("} result: " & Debug.Image (This.Top, This'Access));
       end if;
@@ -262,8 +267,16 @@ package body Skit.Impl.Machines is
          V : Object)
       is
       begin
+         if This.Trace then
+            Ada.Text_IO.Put_Line
+              ("lazy: old: " & Skit.Debug.Image (X, This'Access));
+         end if;
          This.Set_Left (X, I);
          This.Set_Right (X, V);
+         if This.Trace then
+            Ada.Text_IO.Put_Line
+              ("lazy: new: " & Skit.Debug.Image (X, This'Access));
+         end if;
       end Update;
 
    begin
@@ -272,7 +285,7 @@ package body Skit.Impl.Machines is
          It := This.Pop (Control);
 
          while It.Tag = Application_Object loop
-            if Trace then
+            if This.Trace then
                Ada.Text_IO.Put_Line
                  ("push: "
                   & Debug.Image (This.Right (It), This'Access));
@@ -281,7 +294,7 @@ package body Skit.Impl.Machines is
             It := This.Core.Left (This.Top (Control));
          end loop;
 
-         if Trace then
+         if This.Trace then
             Ada.Text_IO.Put_Line
               ("stop: " & Debug.Image (It, This'Access));
          end if;
@@ -418,12 +431,18 @@ package body Skit.Impl.Machines is
                         declare
                            Fn : constant Skit.Primitives.Abstraction'Class :=
                                   This.Prims (P);
+                           Arg_Count : constant Natural :=
+                                         Fn.Argument_Count;
                         begin
-                           for I in 1 .. Fn.Argument_Count loop
+                           for I in 1 .. Arg_Count loop
                               declare
-                                 A : constant Object :=
-                                       This.Right (This.Pop (Control));
+                                 C : constant Object := This.Pop (Control);
+                                 A : constant Object := This.Right (C);
+                                 Last : constant Boolean := I = Arg_Count;
                               begin
+                                 if Last then
+                                    This.Push (C);
+                                 end if;
                                  This.Reset_State (A);
                                  This.Evaluate;
                                  This.Restore_State (This.Top);
@@ -431,7 +450,7 @@ package body Skit.Impl.Machines is
                               end;
                            end loop;
 
-                           if Trace then
+                           if This.Trace then
                               Ada.Text_IO.Put_Line
                                 ("args "
                                  & Debug.Image
@@ -445,7 +464,9 @@ package body Skit.Impl.Machines is
 
                            Fn.Evaluate (This);
                            This.Push (Control, This.Pop);
-
+                           if Arg_Count > 0 then
+                              Update (This.Pop, This.Top (Control));
+                           end if;
                            Changed := True;
                         end;
                      end if;
@@ -660,6 +681,35 @@ package body Skit.Impl.Machines is
    is
    begin
       This.Temps (T) := Value;
+   end Set;
+
+   ---------
+   -- Set --
+   ---------
+
+   overriding procedure Set
+     (This   : in out Instance;
+      Option : String;
+      Value  : String)
+   is
+      function Eq (X, Y : String) return Boolean is
+        (Ada.Strings.Equal_Case_Insensitive (X, Y));
+
+   begin
+      if Eq (Option, "trace") then
+         if Eq (Value, "true") then
+            This.Trace := True;
+         elsif Eq (Value, "False") then
+            This.Trace := False;
+         else
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "option 'trace' accepts 'true' or 'false'");
+         end if;
+      else
+         Ada.Text_IO.Put_Line
+           ("unknown option: " & Option);
+      end if;
    end Set;
 
    --------------

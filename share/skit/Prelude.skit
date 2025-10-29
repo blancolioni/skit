@@ -26,3 +26,4 @@
 !null \x.x true (\x.\y.false)
 !map Y (\m.\f.\list.null list nil (cons (f (head list)) (m f (tail list))))
 !sum Y (\sum.\list.null list 0 (+ (head list) (sum (tail list))))
+!fromTo Y (\fromTo.\lo.\hi.gt lo hi nil (cons lo (fromTo (succ lo) hi)))
