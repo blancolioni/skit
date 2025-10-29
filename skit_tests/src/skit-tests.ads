@@ -10,7 +10,7 @@ package Skit.Tests is
    function K return Stack_Operation_Type;
    function B return Stack_Operation_Type;
    function C return Stack_Operation_Type;
-   function Λ return Stack_Operation_Type;
+   function Lambda return Stack_Operation_Type;
 
    function Int (X : Integer) return Stack_Operation_Type;
    function Prim (P : Natural) return Stack_Operation_Type;
@@ -62,7 +62,7 @@ private
    function K return Stack_Operation_Type is (Push (Skit.K));
    function B return Stack_Operation_Type is (Push (Skit.B));
    function C return Stack_Operation_Type is (Push (Skit.C));
-   function Λ return Stack_Operation_Type is (Push (Skit.λ));
+   function Lambda return Stack_Operation_Type is (Push (Skit.Lambda));
 
    function Int (X : Integer) return Stack_Operation_Type
    is (Push (To_Object (X)));

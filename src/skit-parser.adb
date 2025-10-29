@@ -65,7 +65,7 @@ package body Skit.Parser is
                if Ch = '.' then
                   Skip;
                end if;
-               Machine.Push (Skit.λ);
+               Machine.Push (Skit.Lambda);
                Machine.Push (To_Object (X));
                Parse_Expression;
                Machine.Apply;
