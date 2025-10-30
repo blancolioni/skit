@@ -1,3 +1,4 @@
+with Ada.Command_Line;
 with Ada.Text_IO;
 
 with Skit.Compiler;
@@ -70,6 +71,8 @@ package body Skit.Tests is
         & Fail'Image);
 
       Machine.Report;
+      Ada.Command_Line.Set_Exit_Status
+        (Ada.Command_Line.Exit_Status (Fail));
    end Report;
 
    ----------
