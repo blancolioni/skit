@@ -35,5 +35,9 @@ package Skit.Memory is
    is abstract;
 
    procedure Report (This : Abstraction) is abstract;
+   procedure Trace_GC
+     (This : in out Abstraction;
+      Enabled : Boolean)
+   is abstract;
 
 end Skit.Memory;

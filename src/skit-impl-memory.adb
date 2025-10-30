@@ -33,6 +33,7 @@ package body Skit.Impl.Memory is
          Containers        : Container_Lists.List;
          Alloc_Left        : Object;
          Alloc_Right       : Object;
+         Trace_GC          : Boolean := False;
          Alloc_Count       : Natural := 0;
          Active_Cells      : Natural := 0;
          Max_Active_Cells  : Natural := 0;
@@ -73,6 +74,10 @@ package body Skit.Impl.Memory is
       To   : Object);
 
    overriding procedure Report (This : Instance);
+
+   overriding procedure Trace_GC
+     (This    : in out Instance;
+      Enabled : Boolean);
 
    function In_From_Space
      (This   : Instance'Class;
@@ -254,6 +259,14 @@ package body Skit.Impl.Memory is
       This.Reclaimed := @ + Old_Alloc_Count - This.Alloc_Count;
       This.GC_Time := @ + Clock - Start;
       This.GC_Count := @ + 1;
+
+      if This.Trace_GC then
+         Ada.Text_IO.Put
+           ("[GC"
+            & Integer'Image (-This.GC_Count)
+            & Integer'Image (-This.Alloc_Count)
+            & "]");
+      end if;
    end GC;
 
    -------------------
@@ -426,5 +439,17 @@ package body Skit.Impl.Memory is
 
       This.Core (App.Payload).Right := To;
    end Set_Right;
+
+   --------------
+   -- Trace_GC --
+   --------------
+
+   overriding procedure Trace_GC
+     (This    : in out Instance;
+      Enabled : Boolean)
+   is
+   begin
+      This.Trace_GC := Enabled;
+   end Trace_GC;
 
 end Skit.Impl.Memory;

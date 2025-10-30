@@ -28,7 +28,7 @@ package body Skit.Impl.Machines is
       record
          Core       : Skit.Allocator.Reference;
          Internal   : Internal_Register_Array := [others        => Nil];
-         R          : Object_Array (Register);
+         R          : Object_Array (Register) := [others        => Nil];
          Locals     : Object_Array (1 .. Max_Locals) := [others => Nil];
          Temps      : Temporary_Array := [others => Nil];
          Prims      : Primitive_Function_Vectors.Vector;
@@ -114,6 +114,10 @@ package body Skit.Impl.Machines is
      (This   : in out Instance;
       Option : String;
       Value  : String);
+
+   overriding procedure Trace_GC
+     (This    : in out Instance;
+      Enabled : Boolean);
 
    overriding procedure Report
      (This : Instance);
@@ -696,15 +700,25 @@ package body Skit.Impl.Machines is
         (Ada.Strings.Equal_Case_Insensitive (X, Y));
 
    begin
-      if Eq (Option, "trace") then
+      if Eq (Option, "trace-eval") then
          if Eq (Value, "true") then
             This.Trace := True;
-         elsif Eq (Value, "False") then
+         elsif Eq (Value, "false") then
             This.Trace := False;
          else
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,
-               "option 'trace' accepts 'true' or 'false'");
+               "option 'trace-eval' accepts 'true' or 'false'");
+         end if;
+      elsif Eq (Option, "trace-gc") then
+         if Eq (Value, "true") then
+            This.Core.Trace_GC (True);
+         elsif Eq (Value, "false") then
+            This.Core.Trace_GC (False);
+         else
+            Ada.Text_IO.Put_Line
+              (Ada.Text_IO.Standard_Error,
+               "option 'trace-gc' accepts 'true' or 'false'");
          end if;
       else
          Ada.Text_IO.Put_Line
@@ -762,5 +776,17 @@ package body Skit.Impl.Machines is
    begin
       return This.Core.Left (This.Internal (Stack));
    end Top;
+
+   --------------
+   -- Trace_GC --
+   --------------
+
+   overriding procedure Trace_GC
+     (This    : in out Instance;
+      Enabled : Boolean)
+   is
+   begin
+      This.Core.Trace_GC (Enabled);
+   end Trace_GC;
 
 end Skit.Impl.Machines;
