@@ -9,25 +9,29 @@ package Skit.Memory is
      (This : Abstraction;
       App  : Object)
       return Object
-      is abstract;
+      is abstract
+     with Pre'Class => Is_Application (App);
 
    function Right
      (This : Abstraction;
       App  : Object)
       return Object
-      is abstract;
+      is abstract
+     with Pre'Class => Is_Application (App);
 
    procedure Set_Left
      (This : in out Abstraction;
       App  : Object;
       To   : Object)
-   is abstract;
+   is abstract
+     with Pre'Class => Is_Application (App);
 
    procedure Set_Right
      (This : in out Abstraction;
       App  : Object;
       To   : Object)
-   is abstract;
+   is abstract
+     with Pre'Class => Is_Application (App);
 
    procedure Add_Container
      (This      : in out Abstraction;

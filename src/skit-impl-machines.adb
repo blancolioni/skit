@@ -153,11 +153,13 @@ package body Skit.Impl.Machines is
 
    procedure Reset_State
      (This      : in out Instance'Class;
-      Stack_Top : Object);
+      Stack_Top : Object)
+     with Unreferenced;
 
    procedure Restore_State
      (This      : in out Instance'Class;
-      Stack_Top : Object);
+      Stack_Top : Object)
+     with Unreferenced;
 
    -------------------
    -- Add_Container --
@@ -438,47 +440,92 @@ package body Skit.Impl.Machines is
                            Arg_Count : constant Natural :=
                                          Fn.Argument_Count;
                         begin
-                           for I in 1 .. Arg_Count loop
-                              declare
-                                 C : constant Object := This.Pop (Control);
-                                 A : constant Object := This.Right (C);
-                                 Last : constant Boolean := I = Arg_Count;
-                              begin
-                                 if Last then
-                                    This.Push (C);
+                           if Arg_Count = 0 then
+                              Fn.Evaluate (This);
+                              Changed := True;
+                           else
+                              This.Push (It);
+                              for I in 1 .. Arg_Count  loop
+                                 if I = Arg_Count then
+                                    This.Push
+                                      (Control,
+                                       This.Right (This.Pop (Control)));
+                                    Changed := True;
+                                 else
+                                    This.Push (This.Pop (Control));
+                                    This.Apply;
                                  end if;
-                                 This.Reset_State (A);
-                                 This.Evaluate;
-                                 This.Restore_State (This.Top);
-                                 This.Push (Secondary_Stack, This.Pop);
-                              end;
-                           end loop;
-
-                           if This.Trace then
-                              Ada.Text_IO.Put_Line
-                                ("args "
-                                 & Debug.Image
-                                   (This.Internal (Secondary_Stack),
-                                    This'Access));
+                              end loop;
+                              This.Push (Suspension);
+                              This.Apply;
+                              This.Push (Secondary_Stack, This.Pop);
+                              if This.Trace then
+                                 Ada.Text_IO.Put_Line
+                                   ("new suspension: "
+                                    & Skit.Debug.Image
+                                      (This.Top (Secondary_Stack),
+                                       This'Access));
+                              end if;
                            end if;
-
-                           for I in 1 .. Fn.Argument_Count loop
-                              This.Push (This.Pop (Secondary_Stack));
-                           end loop;
-
-                           Fn.Evaluate (This);
-                           This.Push (Control, This.Pop);
-                           if Arg_Count > 0 then
-                              Update (This.Pop, This.Top (Control));
-                           end if;
-                           Changed := True;
                         end;
                      end if;
                   end;
                when others =>
                   null;
             end case;
+         else
+            This.Push (It);
          end if;
+
+         if not Changed
+           and then This.Internal (Secondary_Stack) /= Nil
+           and then This.Top (Secondary_Stack).Tag = Application_Object
+           and then This.Right (This.Top (Secondary_Stack)) = Suspension
+         then
+            if This.Trace then
+               Ada.Text_IO.Put_Line
+                 ("suspension: "
+                  & Skit.Debug.Image (This.Top (Secondary_Stack), This'Access));
+            end if;
+            if This.Left (This.Top (Secondary_Stack)).Tag
+              = Primitive_Object
+            then
+               declare
+                  P : constant Object :=
+                        This.Left (This.Pop (Secondary_Stack));
+                  P_Index : constant Natural :=
+                              Natural
+                                (P.Payload - Primitive_Function_Payload'First);
+                  Fn      : constant Skit.Primitives.Abstraction'Class :=
+                              This.Prims (P_Index);
+               begin
+                  Fn.Evaluate (This);
+                  This.Push (Control, This.Pop);
+               end;
+            else
+               This.Push
+                 (Control,
+                  This.Right
+                    (This.Right (This.Left (This.Top (Secondary_Stack)))));
+               This.Push
+                 (This.Left (This.Left (This.Pop (Secondary_Stack))));
+               This.Push
+                 (Suspension);
+               This.Apply;
+               This.Push (Secondary_Stack, This.Pop);
+               if This.Trace then
+                  Ada.Text_IO.Put_Line
+                    ("remaining suspension: "
+                     & Skit.Debug.Image
+                       (This.Top (Secondary_Stack), This'Access));
+                  Ada.Text_IO.Put_Line
+                    ("new control: "
+                     & Skit.Debug.Image (This.Top (Control), This'Access));
+               end if;
+            end if;
+            Changed := True;
+         end if;
+
       end loop;
 
       This.Push (It);

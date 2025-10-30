@@ -10,20 +10,23 @@ package Skit is
    type Object is private;
    type Object_Array is array (Positive range <>) of Object;
 
-   Nil       : constant Object;
-   S         : constant Object;
-   K         : constant Object;
-   I         : constant Object;
-   C         : constant Object;
-   B         : constant Object;
-   S_Prime   : constant Object;
-   B_Star    : constant Object;
-   C_Prime   : constant Object;
-   Lambda    : constant Object;
-   Undefined : constant Object;
+   Nil        : constant Object;
+   S          : constant Object;
+   K          : constant Object;
+   I          : constant Object;
+   C          : constant Object;
+   B          : constant Object;
+   S_Prime    : constant Object;
+   B_Star     : constant Object;
+   C_Prime    : constant Object;
+   Lambda     : constant Object;
+   Undefined  : constant Object;
+   Suspension : constant Object;
 
    function To_Object (X : Integer) return Object;
    function To_Object (X : Float) return Object;
+
+   function Is_Application (X : Object) return Boolean;
 
    type Variable_Index is range 1 .. 999;
 
@@ -46,29 +49,31 @@ private
       end record
      with Pack, Size => 32;
 
-   Payload_Nil       : constant Object_Payload := 0;
-   Payload_S         : constant Object_Payload := 1;
-   Payload_K         : constant Object_Payload := 2;
-   Payload_I         : constant Object_Payload := 3;
-   Payload_C         : constant Object_Payload := 4;
-   Payload_B         : constant Object_Payload := 5;
-   Payload_S_Prime   : constant Object_Payload := 6;
-   Payload_B_Star    : constant Object_Payload := 7;
-   Payload_C_Prime   : constant Object_Payload := 8;
-   Payload_Lambda    : constant Object_Payload := 9;
-   Payload_Undefined : constant Object_Payload := 10;
+   Payload_Nil        : constant Object_Payload := 0;
+   Payload_S          : constant Object_Payload := 1;
+   Payload_K          : constant Object_Payload := 2;
+   Payload_I          : constant Object_Payload := 3;
+   Payload_C          : constant Object_Payload := 4;
+   Payload_B          : constant Object_Payload := 5;
+   Payload_S_Prime    : constant Object_Payload := 6;
+   Payload_B_Star     : constant Object_Payload := 7;
+   Payload_C_Prime    : constant Object_Payload := 8;
+   Payload_Lambda     : constant Object_Payload := 9;
+   Payload_Undefined  : constant Object_Payload := 10;
+   Payload_Suspension : constant Object_Payload := 11;
 
-   Nil       : constant Object := (Payload_Nil, Primitive_Object);
-   S         : constant Object := (Payload_S, Primitive_Object);
-   K         : constant Object := (Payload_K, Primitive_Object);
-   I         : constant Object := (Payload_I, Primitive_Object);
-   C         : constant Object := (Payload_C, Primitive_Object);
-   B         : constant Object := (Payload_B, Primitive_Object);
-   S_Prime   : constant Object := (Payload_S_Prime, Primitive_Object);
-   B_Star    : constant Object := (Payload_B_Star, Primitive_Object);
-   C_Prime   : constant Object := (Payload_C_Prime, Primitive_Object);
-   Lambda    : constant Object := (Payload_Lambda, Primitive_Object);
-   Undefined : constant Object := (Payload_Undefined, Primitive_Object);
+   Nil        : constant Object := (Payload_Nil, Primitive_Object);
+   S          : constant Object := (Payload_S, Primitive_Object);
+   K          : constant Object := (Payload_K, Primitive_Object);
+   I          : constant Object := (Payload_I, Primitive_Object);
+   C          : constant Object := (Payload_C, Primitive_Object);
+   B          : constant Object := (Payload_B, Primitive_Object);
+   S_Prime    : constant Object := (Payload_S_Prime, Primitive_Object);
+   B_Star     : constant Object := (Payload_B_Star, Primitive_Object);
+   C_Prime    : constant Object := (Payload_C_Prime, Primitive_Object);
+   Lambda     : constant Object := (Payload_Lambda, Primitive_Object);
+   Undefined  : constant Object := (Payload_Undefined, Primitive_Object);
+   Suspension : constant Object := (Payload_Suspension, Primitive_Object);
 
    subtype Primitive_Function_Payload is
      Object_Payload range 64 .. 255;
@@ -90,5 +95,8 @@ private
 
    function Is_Primitive (O : Object) return Boolean
    is (O.Tag = Primitive_Object);
+
+   function Is_Application (X : Object) return Boolean
+   is (X.Tag = Application_Object);
 
 end Skit;

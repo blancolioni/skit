@@ -49,6 +49,8 @@ package body Skit.Debug is
                   return "\";
                when 10 =>
                   return "*undefined*";
+               when 11 =>
+                  return "T";
                when Primitive_Variable_Payload =>
                   declare
                      Ch : constant Character :=

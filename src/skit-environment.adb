@@ -182,6 +182,7 @@ package body Skit.Environment is
       procedure Load_Line (Line : String) is
       begin
          This.Evaluate (Line);
+         This.Machine.Drop;
       end Load_Line;
 
       use Ada.Text_IO;
