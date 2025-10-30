@@ -25,5 +25,6 @@
 !nil \a.\b.a
 !null \x.x true (\x.\y.false)
 !map Y (\m.\f.\list.null list nil (cons (f (head list)) (m f (tail list))))
-!sum Y (\sum.\list.null list 0 (+ (head list) (sum (tail list))))
+!foldr Y (\foldr.\f.\z.\xs.null xs z (f (head xs) (foldr f z (tail xs))))
+!sum foldr + 0
 !fromTo Y (\fromTo.\lo.\hi.gt lo hi nil (cons lo (fromTo (succ lo) hi)))
