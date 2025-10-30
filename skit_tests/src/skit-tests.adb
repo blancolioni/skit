@@ -15,6 +15,26 @@ package body Skit.Tests is
 
    Total, Pass, Fail : Natural := 0;
 
+   procedure Put
+     (S   : String;
+      Max : Natural);
+
+   ---------
+   -- Put --
+   ---------
+
+   procedure Put
+     (S   : String;
+      Max : Natural)
+   is
+   begin
+      if S'Length > Max then
+         Ada.Text_IO.Put (S (S'First .. S'First + Max - 1));
+      else
+         Ada.Text_IO.Put (S);
+      end if;
+   end Put;
+
    ----------
    -- Test --
    ----------
@@ -83,8 +103,7 @@ package body Skit.Tests is
       declare
          Result : constant Skit.Object := Machine.Pop;
       begin
-         Ada.Text_IO.Put (Name);
-         Ada.Text_IO.Set_Col (40);
+         Put (Name, 38);
 
          if Result = Expected then
             Pass := @ + 1;
@@ -127,7 +146,7 @@ package body Skit.Tests is
       declare
          Result : constant Skit.Object := Machine.Pop;
       begin
-         Ada.Text_IO.Put (Source & " ==> " & Skit.Debug.Image (Expected));
+         Put (Source, 38);
          Ada.Text_IO.Set_Col (40);
 
          if Result = Expected then
