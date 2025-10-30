@@ -448,6 +448,8 @@ package body Skit.Impl.Machines is
                               for I in 1 .. Arg_Count  loop
                                  if I = Arg_Count then
                                     This.Push
+                                      (Secondary_Stack, This.Top (Control));
+                                    This.Push
                                       (Control,
                                        This.Right (This.Pop (Control)));
                                     Changed := True;
@@ -485,7 +487,8 @@ package body Skit.Impl.Machines is
             if This.Trace then
                Ada.Text_IO.Put_Line
                  ("suspension: "
-                  & Skit.Debug.Image (This.Top (Secondary_Stack), This'Access));
+                  & Skit.Debug.Image
+                    (This.Top (Secondary_Stack), This'Access));
             end if;
             if This.Left (This.Top (Secondary_Stack)).Tag
               = Primitive_Object
@@ -500,6 +503,7 @@ package body Skit.Impl.Machines is
                               This.Prims (P_Index);
                begin
                   Fn.Evaluate (This);
+                  Update (This.Pop (Secondary_Stack), This.Top);
                   This.Push (Control, This.Pop);
                end;
             else
