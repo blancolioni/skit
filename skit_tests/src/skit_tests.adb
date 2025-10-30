@@ -94,7 +94,7 @@ begin
    Test ("sum (map (* 2) (cons 1 (cons 2 (cons 3 nil))))", 12);
    Test ("sum (map (putChar 1 1) (cons 65 (cons 66 (cons 67 (cons 10 nil)))))",
          8);
-   Test ("sum (fromTo 1 20)", 210);
+   Test ("sum (fromTo 1 100)", 5050);
    Test ("(\x.+ x x) (+ 4 (trace 5))", 18);
    Report;
 end Skit_Tests;

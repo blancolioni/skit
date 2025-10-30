@@ -76,7 +76,12 @@ private
    subtype Primitive_Variable_Payload is
      Object_Payload range 4096 .. 65535;
 
-   function To_Integer (X : Object) return Integer;
+   function Is_Integer (X : Object) return Boolean
+   is (X.Tag = Integer_Object);
+
+   function To_Integer (X : Object) return Integer
+     with Pre => Is_Integer (X);
+
    function To_Float (X : Object) return Float;
 
    function To_Variable_Object (Index : Variable_Index) return Object

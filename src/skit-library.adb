@@ -142,7 +142,9 @@ package body Skit.Library is
       Stack   : in out Skit.Stacks.Abstraction'Class)
    is
       X : constant Object := Stack.Pop;
+      pragma Assert (Is_Integer (X));
       Y : constant Object := Stack.Pop;
+      pragma Assert (Is_Integer (Y));
       Z : constant Object :=
             To_Object
               (This.Int_Op

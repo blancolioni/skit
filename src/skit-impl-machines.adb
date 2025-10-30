@@ -649,13 +649,14 @@ package body Skit.Impl.Machines is
       Stack_Top : Object)
    is
    begin
+      This.Locals (1) := Stack_Top;
       This.Push (Dump, This.Internal (Control));
       This.Push (Dump, This.Internal (Secondary_Stack));
       This.Push (Dump, This.Internal (Stack));
       This.Internal (Control) := Nil;
       This.Internal (Secondary_Stack) := Nil;
       This.Internal (Control) := Nil;
-      This.Push (Stack, Stack_Top);
+      This.Push (Stack, This.Locals (1));
    end Reset_State;
 
    -------------------
