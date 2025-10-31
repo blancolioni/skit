@@ -1,118 +1,44 @@
 with Ada.Calendar;
-with Ada.Containers.Doubly_Linked_Lists;
 with Ada.Text_IO;
 
-with Skit.Containers;
 with Skit.Exceptions;
 
 package body Skit.Impl.Memory is
 
-   subtype Cell_Address is Object_Payload;
-
-   type Cell_Type is
-      record
-         Left, Right : Object;
-      end record;
-
-   type Cell_Array is array (Cell_Address range <>) of Cell_Type;
-
-   type Container_Reference is access all Skit.Containers.Abstraction'Class;
-   package Container_Lists is
-      new Ada.Containers.Doubly_Linked_Lists (Container_Reference);
-
-   subtype Parent is Skit.Allocator.Abstraction;
-   type Instance (Last : Cell_Address) is new Parent with
-      record
-         Core              : Cell_Array (0 .. Last);
-         Top               : Cell_Address;
-         Free              : Cell_Address;
-         From_Space        : Cell_Address;
-         To_Space          : Cell_Address;
-         Space_Size        : Cell_Address;
-         Scan              : Cell_Address;
-         Containers        : Container_Lists.List;
-         Alloc_Left        : Object;
-         Alloc_Right       : Object;
-         Trace_GC          : Boolean := False;
-         Alloc_Count       : Natural := 0;
-         Active_Cells      : Natural := 0;
-         Max_Active_Cells  : Natural := 0;
-         Total_Alloc_Count : Natural := 0;
-         Reclaimed         : Natural := 0;
-         GC_Time           : Duration := 0.0;
-         GC_Count          : Natural := 0;
-      end record;
-
-   overriding procedure Add_Container
-     (This      : in out Instance;
-      Container : not null access Skit.Containers.Abstraction'Class);
-
-   overriding function Allocate
-     (This   : in out Instance;
-      Left   : in out Object;
-      Right  : in out Object)
-      return Object;
-
-   overriding function Left
-     (This : Instance;
-      App  : Object)
-      return Object;
-
-   overriding function Right
-     (This : Instance;
-      App  : Object)
-      return Object;
-
-   overriding procedure Set_Left
-     (This : in out Instance;
-      App  : Object;
-      To   : Object);
-
-   overriding procedure Set_Right
-     (This : in out Instance;
-      App  : Object;
-      To   : Object);
-
-   overriding procedure Report (This : Instance);
-
-   overriding procedure Trace_GC
-     (This    : in out Instance;
-      Enabled : Boolean);
-
    function In_From_Space
-     (This   : Instance'Class;
+     (This   : Instance;
       Item   : Object)
       return Boolean;
 
    function In_To_Space
-     (This   : Instance'Class;
+     (This   : Instance;
       Item   : Object)
       return Boolean;
 
    function Copy
-     (This    : in out Instance'Class;
+     (This    : in out Instance;
       Address : Cell_Address)
       return Cell_Address;
 
    function Move
-     (This : in out Instance'Class;
+     (This : in out Instance;
       Item : Object)
       return Object;
 
-   procedure Flip (This : in out Instance'Class);
+   procedure Flip (This : in out Instance);
 
    procedure Mark
-     (This : in out Instance'Class;
+     (This : in out Instance;
       Item : in out Object);
 
    procedure GC
-     (This : in out Instance'Class);
+     (This : in out Instance);
 
    -------------------
    -- Add_Container --
    -------------------
 
-   overriding procedure Add_Container
+   procedure Add_Container
      (This      : in out Instance;
       Container : not null access Skit.Containers.Abstraction'Class)
    is
@@ -120,11 +46,11 @@ package body Skit.Impl.Memory is
       This.Containers.Append (Container_Reference (Container));
    end Add_Container;
 
-   --------------
-   -- Allocate --
-   --------------
+   -----------------------
+   -- Free_And_Allocate --
+   -----------------------
 
-   overriding function Allocate
+   function Free_And_Allocate
      (This   : in out Instance;
       Left   : in out Object;
       Right  : in out Object)
@@ -134,29 +60,24 @@ package body Skit.Impl.Memory is
       This.Alloc_Left := Left;
       This.Alloc_Right := Right;
 
+      GC (This);
+
       if This.Free = This.Top then
-         This.GC;
-         if This.Free = This.Top then
-            raise Constraint_Error with "out of memory";
-         end if;
+         raise Constraint_Error with "out of memory";
       end if;
 
-      return Result         : constant Object :=
-        (This.Free, Application_Object)
-      do
-         This.Core (This.Free) := (This.Alloc_Left, This.Alloc_Right);
-         This.Free := This.Free + 1;
-         This.Alloc_Count := This.Alloc_Count + 1;
-         This.Total_Alloc_Count := @ + 1;
-      end return;
-   end Allocate;
+      Left := This.Alloc_Left;
+      Right := This.Alloc_Right;
+
+      return Quick_Allocate (This, Left, Right);
+   end Free_And_Allocate;
 
    ----------
    -- Copy --
    ----------
 
    function Copy
-     (This    : in out Instance'Class;
+     (This    : in out Instance;
       Address : Cell_Address)
       return Cell_Address
    is
@@ -173,14 +94,14 @@ package body Skit.Impl.Memory is
 
    function Create
      (Core_Size  : Positive)
-      return Skit.Allocator.Reference
+      return Reference
    is
       Top_Address : constant Cell_Address := Cell_Address (Core_Size - 1);
       Space_Size  : constant Cell_Address := Cell_Address (Core_Size / 2);
       To_Space    : constant Cell_Address := 0;
       From_Space  : constant Cell_Address := Space_Size;
 
-      Mem : constant Skit.Allocator.Reference :=
+      Mem : constant Reference :=
               new Instance'
                 (Last              => Top_Address,
                  Core              => <>,
@@ -198,7 +119,7 @@ package body Skit.Impl.Memory is
    -- Flip --
    ----------
 
-   procedure Flip (This : in out Instance'Class) is
+   procedure Flip (This : in out Instance) is
       Original_To_Space : constant Cell_Address := This.To_Space;
    begin
       This.To_Space := This.From_Space;
@@ -213,16 +134,16 @@ package body Skit.Impl.Memory is
    --------
 
    procedure GC
-     (This : in out Instance'Class)
+     (This : in out Instance)
    is
       use Ada.Calendar;
       Start           : constant Time := Clock;
       Old_Alloc_Count : constant Natural := This.Alloc_Count;
    begin
-      This.Flip;
+      Flip (This);
 
-      This.Mark (This.Alloc_Left);
-      This.Mark (This.Alloc_Right);
+      Mark (This, This.Alloc_Left);
+      Mark (This, This.Alloc_Right);
 
       declare
          procedure Set (Item : in out Object);
@@ -233,7 +154,7 @@ package body Skit.Impl.Memory is
 
          procedure Set (Item : in out Object) is
          begin
-            This.Mark (Item);
+            Mark (This, Item);
          end Set;
 
       begin
@@ -245,8 +166,8 @@ package body Skit.Impl.Memory is
       while This.Scan < This.Free loop
          declare
             Cell      : Cell_Type renames This.Core (This.Scan);
-            New_Left  : constant Object := This.Move (Cell.Left);
-            New_Right : constant Object := This.Move (Cell.Right);
+            New_Left  : constant Object := Move (This, Cell.Left);
+            New_Right : constant Object := Move (This, Cell.Right);
          begin
             Cell := (New_Left, New_Right);
             This.Scan := @ + 1;
@@ -274,7 +195,7 @@ package body Skit.Impl.Memory is
    -------------------
 
    function In_From_Space
-     (This   : Instance'Class;
+     (This   : Instance;
       Item   : Object)
       return Boolean
    is
@@ -289,7 +210,7 @@ package body Skit.Impl.Memory is
    -----------------
 
    function In_To_Space
-     (This   : Instance'Class;
+     (This   : Instance;
       Item   : Object)
       return Boolean
    is
@@ -300,32 +221,15 @@ package body Skit.Impl.Memory is
    end In_To_Space;
 
    ----------
-   -- Left --
-   ----------
-
-   overriding function Left
-     (This : Instance;
-      App  : Object)
-      return Object
-   is
-   begin
-      if App.Payload > This.Last then
-         raise Skit.Exceptions.Address_Error with App.Payload'Image;
-      end if;
-
-      return This.Core (App.Payload).Left;
-   end Left;
-
-   ----------
    -- Mark --
    ----------
 
    procedure Mark
-     (This : in out Instance'Class;
+     (This : in out Instance;
       Item : in out Object)
    is
    begin
-      Item := This.Move (Item);
+      Item := Move (This, Item);
    end Mark;
 
    ----------
@@ -333,32 +237,52 @@ package body Skit.Impl.Memory is
    ----------
 
    function Move
-     (This : in out Instance'Class;
+     (This : in out Instance;
       Item : Object)
       return Object
    is
    begin
-      if not This.In_From_Space (Item) then
+      if not In_From_Space (This, Item) then
          return Item;
       end if;
 
       declare
          Address : constant Cell_Address := Item.Payload;
+         Cell    : Cell_Type renames This.Core (Address);
       begin
-         if not This.In_To_Space (This.Core (Address).Left) then
-            This.Core (Address).Left :=
-              (This.Copy (Address), Application_Object);
+         if not In_To_Space (This, Cell.Left) then
+            Cell.Left :=
+              (Copy (This, Address), Application_Object);
          end if;
-         return This.Core (Address).Left;
+         return Cell.Left;
       end;
 
    end Move;
+
+   --------------------
+   -- Quick_Allocate --
+   --------------------
+
+   function Quick_Allocate
+     (This   : in out Instance;
+      Left   : Object;
+      Right  : Object)
+      return Object
+   is
+      Result : constant Object := (This.Free, Application_Object);
+   begin
+      This.Core (This.Free) := (Left, Right);
+      This.Free := This.Free + 1;
+      This.Alloc_Count := This.Alloc_Count + 1;
+      This.Total_Alloc_Count := @ + 1;
+      return Result;
+   end Quick_Allocate;
 
    ------------
    -- Report --
    ------------
 
-   overriding procedure Report (This : Instance) is
+   procedure Report (This : Instance) is
    begin
       Ada.Text_IO.Put_Line
         ("Total number of cells:"
@@ -389,28 +313,11 @@ package body Skit.Impl.Memory is
          & Natural'Image (This.Reclaimed));
    end Report;
 
-   -----------
-   -- Right --
-   -----------
-
-   overriding function Right
-     (This : Instance;
-      App  : Object)
-      return Object
-   is
-   begin
-      if App.Payload > This.Last then
-         raise Skit.Exceptions.Address_Error with App.Payload'Image;
-      end if;
-
-      return This.Core (App.Payload).Right;
-   end Right;
-
    --------------
    -- Set_Left --
    --------------
 
-   overriding procedure Set_Left
+   procedure Set_Left
      (This : in out Instance;
       App  : Object;
       To   : Object)
@@ -427,7 +334,7 @@ package body Skit.Impl.Memory is
    -- Set_Right --
    ---------------
 
-   overriding procedure Set_Right
+   procedure Set_Right
      (This : in out Instance;
       App  : Object;
       To   : Object)
@@ -444,7 +351,7 @@ package body Skit.Impl.Memory is
    -- Trace_GC --
    --------------
 
-   overriding procedure Trace_GC
+   procedure Trace_GC
      (This    : in out Instance;
       Enabled : Boolean)
    is
