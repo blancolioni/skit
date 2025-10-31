@@ -2,7 +2,6 @@ with Ada.Containers.Indefinite_Vectors;
 with Ada.Strings.Equal_Case_Insensitive;
 with Ada.Text_IO;
 
-with Skit.Allocator;
 with Skit.Debug;
 with Skit.Impl.Memory;
 with Skit.Containers;
@@ -26,7 +25,7 @@ package body Skit.Impl.Machines is
 
    type Instance is new Parent and Skit.Containers.Abstraction with
       record
-         Core       : Skit.Allocator.Reference;
+         Core       : Skit.Impl.Memory.Reference;
          Internal   : Internal_Register_Array := [others        => Nil];
          R          : Object_Array (Register) := [others        => Nil];
          Locals     : Object_Array (1 .. Max_Locals) := [others => Nil];
@@ -68,13 +67,13 @@ package body Skit.Impl.Machines is
      (This : Instance;
       App  : Object)
       return Object
-   is (This.Core.Left (App));
+   is (Skit.Impl.Memory.Left (This.Core.all, App));
 
    overriding function Right
      (This : Instance;
       App  : Object)
       return Object
-   is (This.Core.Right (App));
+   is (Skit.Impl.Memory.Right (This.Core.all, App));
 
    overriding procedure Set_Left
      (This : in out Instance;
@@ -170,7 +169,7 @@ package body Skit.Impl.Machines is
       Container : not null access Skit.Containers.Abstraction'Class)
    is
    begin
-      This.Core.Add_Container (Container);
+      Skit.Impl.Memory.Add_Container (This.Core.all, Container);
    end Add_Container;
 
    -----------
@@ -186,7 +185,7 @@ package body Skit.Impl.Machines is
          raise Constraint_Error with
            "apply: not enough arguments";
       end if;
-      This.Push (This.Core.Allocate (Args (1), Args (2)));
+      This.Push (Skit.Impl.Memory.Allocate (This.Core.all, Args (1), Args (2)));
    end Apply;
 
    ----------
@@ -216,7 +215,7 @@ package body Skit.Impl.Machines is
       This : constant Reference := new Instance;
    begin
       This.Core := Skit.Impl.Memory.Create (Core_Size);
-      This.Core.Add_Container (This);
+      Skit.Impl.Memory.Add_Container (This.Core.all, This);
       return Skit.Machine.Reference (This);
    end Create;
 
@@ -297,7 +296,7 @@ package body Skit.Impl.Machines is
                   & Debug.Image (This.Right (It), This'Access));
             end if;
             This.Push (Control, It);
-            It := This.Core.Left (This.Top (Control));
+            It := Skit.Impl.Memory.Left (This.Core.all, This.Top (Control));
          end loop;
 
          if This.Trace then
@@ -313,7 +312,7 @@ package body Skit.Impl.Machines is
                      X : Object_Array (1 .. 1);
                   begin
                      if This.Pop (Control, X) then
-                        It := This.Core.Right (X (1));
+                        It := Skit.Impl.Memory.Right (This.Core.all, X (1));
                         This.Push (Control, It);
                         Changed := True;
                         This.R_I := @ + 1;
@@ -325,7 +324,7 @@ package body Skit.Impl.Machines is
                      X : Object_Array (1 .. 2);
                   begin
                      if This.Pop (Control, X) then
-                        It := This.Core.Right (X (2));
+                        It := Skit.Impl.Memory.Right (This.Core.all, X (2));
                         Update (X (1), It);
                         This.Push (Control, It);
                         Changed := True;
@@ -538,7 +537,7 @@ package body Skit.Impl.Machines is
          Count : Natural := 0;
       begin
          while This.Internal (Control) /= Nil loop
-            This.Push (This.Core.Right (This.Pop (Control)));
+            This.Push (Skit.Impl.Memory.Right (This.Core.all, This.Pop (Control)));
             This.Apply;
             Count := Count + 1;
          end loop;
@@ -598,8 +597,8 @@ package body Skit.Impl.Machines is
          if S = Nil then
             return False;
          end if;
-         This.Locals (I) := This.Core.Left (S);
-         S := This.Core.Right (S);
+         This.Locals (I) := Skit.Impl.Memory.Left (This.Core.all, S);
+         S := Skit.Impl.Memory.Right (This.Core.all, S);
       end loop;
       Values := This.Locals (1 .. Values'Length);
       This.Internal (Stack) := S;
@@ -649,7 +648,7 @@ package body Skit.Impl.Machines is
       This.Locals (1 .. Values'Length) := Values;
       for V of This.Locals (1 .. Values'Length) loop
          This.Internal (Stack) :=
-           This.Core.Allocate (V, This.Internal (Stack));
+           Skit.Impl.Memory.Allocate (This.Core.all, V, This.Internal (Stack));
       end loop;
       Values := This.Locals (1 .. Values'Length);
       This.Locals := [others => Nil];
@@ -666,7 +665,8 @@ package body Skit.Impl.Machines is
    is
       T : Object := Value;
    begin
-      This.Internal (Stack) := This.Core.Allocate (T, This.Internal (Stack));
+      This.Internal (Stack) :=
+        Skit.Impl.Memory.Allocate (This.Core.all, T, This.Internal (Stack));
    end Push;
 
    ------------
@@ -688,7 +688,7 @@ package body Skit.Impl.Machines is
          & "; S'" & This.R_Sp'Image
          & "; B*" & This.R_Bs'Image
          & "; C'" & This.R_Cp'Image);
-      This.Core.Report;
+      Skit.Impl.Memory.Report (This.Core.all);
    end Report;
 
    -----------------
@@ -764,9 +764,9 @@ package body Skit.Impl.Machines is
          end if;
       elsif Eq (Option, "trace-gc") then
          if Eq (Value, "true") then
-            This.Core.Trace_GC (True);
+            Skit.Impl.Memory.Trace_GC (This.Core.all, True);
          elsif Eq (Value, "false") then
-            This.Core.Trace_GC (False);
+            Skit.Impl.Memory.Trace_GC (This.Core.all, False);
          else
             Ada.Text_IO.Put_Line
               (Ada.Text_IO.Standard_Error,
@@ -788,7 +788,7 @@ package body Skit.Impl.Machines is
       To   : Object)
    is
    begin
-      This.Core.Set_Left (App, To);
+      Skit.Impl.Memory.Set_Left (This.Core.all, App, To);
    end Set_Left;
 
    ---------------
@@ -801,7 +801,7 @@ package body Skit.Impl.Machines is
       To   : Object)
    is
    begin
-      This.Core.Set_Right (App, To);
+      Skit.Impl.Memory.Set_Right (This.Core.all, App, To);
    end Set_Right;
 
    ---------
@@ -826,7 +826,7 @@ package body Skit.Impl.Machines is
       return Object
    is
    begin
-      return This.Core.Left (This.Internal (Stack));
+      return Skit.Impl.Memory.Left (This.Core.all, This.Internal (Stack));
    end Top;
 
    --------------
@@ -838,7 +838,7 @@ package body Skit.Impl.Machines is
       Enabled : Boolean)
    is
    begin
-      This.Core.Trace_GC (Enabled);
+      Skit.Impl.Memory.Trace_GC (This.Core.all, Enabled);
    end Trace_GC;
 
 end Skit.Impl.Machines;
