@@ -102,8 +102,7 @@ private
       Left   : Object;
       Right  : Object)
       return Object
-     with Inline_Always,
-     Pre => This.Free < This.Top;
+     with Inline_Always;
 
    function Free_And_Allocate
      (This   : in out Instance;

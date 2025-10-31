@@ -185,7 +185,8 @@ package body Skit.Impl.Machines is
          raise Constraint_Error with
            "apply: not enough arguments";
       end if;
-      This.Push (Skit.Impl.Memory.Allocate (This.Core.all, Args (1), Args (2)));
+      This.Push
+        (Skit.Impl.Memory.Allocate (This.Core.all, Args (1), Args (2)));
    end Apply;
 
    ----------
@@ -537,7 +538,8 @@ package body Skit.Impl.Machines is
          Count : Natural := 0;
       begin
          while This.Internal (Control) /= Nil loop
-            This.Push (Skit.Impl.Memory.Right (This.Core.all, This.Pop (Control)));
+            This.Push
+              (Skit.Impl.Memory.Right (This.Core.all, This.Pop (Control)));
             This.Apply;
             Count := Count + 1;
          end loop;
