@@ -4,6 +4,15 @@
 !if \c.\t.\f.c t f
 !Y S S I (C B (S I I))
 !flip \f.\x.\y.f y x
+!+ #add
+!- #sub
+!* #mul
+!/ #div
+!mod #mod
+!le #le
+!eq #eq
+!putChar #putChar
+!trace #trace
 !succ + 1
 !pred flip - 1
 !not \x.if x false true

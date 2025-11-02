@@ -174,6 +174,10 @@ package body Skit.Library is
       Stack.Push (To_Object (To_Integer (World_Index) + 1));
    end Evaluate;
 
+   --------------
+   -- Evaluate --
+   --------------
+
    overriding procedure Evaluate
      (This    : Trace_Instance;
       Stack   : in out Skit.Stacks.Abstraction'Class)
@@ -183,11 +187,11 @@ package body Skit.Library is
         ("[TRACE] " & Skit.Debug.Image (Stack.Top, This.Env.Machine));
    end Evaluate;
 
-   ---------------------------
-   -- Load_Standard_Library --
-   ---------------------------
+   ---------------------
+   -- Load_Primitives --
+   ---------------------
 
-   procedure Load_Standard_Library
+   procedure Load_Primitives
      (Environment : not null access Skit.Environment.Instance'Class)
    is
       procedure Bind
@@ -209,19 +213,30 @@ package body Skit.Library is
       IO : constant Skit.Interfaces.Reference := new IO_Instance;
    begin
       Environment.Bind ("IO", IO);
-      Bind ("eq", Predicate (Eq'Access));
-      Bind ("le", Predicate (Le'Access));
-      Bind ("+", Binary_Op (Add'Access, Add'Access));
-      Bind ("-", Binary_Op (Sub'Access, Sub'Access));
-      Bind ("*", Binary_Op (Mul'Access, Mul'Access));
-      Bind ("/", Binary_Op (Int_Div'Access, Div'Access));
-      Bind ("mod", Binary_Op (Int_Mod'Access, null));
-      Bind ("putChar",
+      Bind ("#eq", Predicate (Eq'Access));
+      Bind ("#le", Predicate (Le'Access));
+      Bind ("#add", Binary_Op (Add'Access, Add'Access));
+      Bind ("#sub", Binary_Op (Sub'Access, Sub'Access));
+      Bind ("#mul", Binary_Op (Mul'Access, Mul'Access));
+      Bind ("#div", Binary_Op (Int_Div'Access, Div'Access));
+      Bind ("#mod", Binary_Op (Int_Mod'Access, null));
+      Bind ("#putChar",
             Put_Char_Instance'
               (Env => Skit.Environment.Reference (Environment)));
-      Bind ("trace",
+      Bind ("#trace",
             Trace_Instance'
               (Env => Skit.Environment.Reference (Environment)));
+   end Load_Primitives;
+
+   ---------------------------
+   -- Load_Standard_Library --
+   ---------------------------
+
+   procedure Load_Standard_Library
+     (Environment : not null access Skit.Environment.Instance'Class)
+   is
+   begin
+      Load_Primitives (Environment);
       Environment.Load (Skit.Resources.Resource_Path & "/Prelude.skit");
    end Load_Standard_Library;
 
