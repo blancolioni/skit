@@ -22,6 +22,8 @@ package Skit is
    Lambda     : constant Object;
    Undefined  : constant Object;
    Suspension : constant Object;
+   Sequence   : constant Object;
+   Seq_Value  : constant Object;
 
    function To_Object (X : Integer) return Object;
    function To_Object (X : Float) return Object;
@@ -61,6 +63,8 @@ private
    Payload_Lambda     : constant Object_Payload := 9;
    Payload_Undefined  : constant Object_Payload := 10;
    Payload_Suspension : constant Object_Payload := 11;
+   Payload_Sequence   : constant Object_Payload := 12;
+   Payload_Seq_Value  : constant Object_Payload := 13;
 
    Nil        : constant Object := (Payload_Nil, Primitive_Object);
    S          : constant Object := (Payload_S, Primitive_Object);
@@ -74,6 +78,8 @@ private
    Lambda     : constant Object := (Payload_Lambda, Primitive_Object);
    Undefined  : constant Object := (Payload_Undefined, Primitive_Object);
    Suspension : constant Object := (Payload_Suspension, Primitive_Object);
+   Sequence   : constant Object := (Payload_Sequence, Primitive_Object);
+   Seq_Value  : constant Object := (Payload_Seq_Value, Primitive_Object);
 
    subtype Primitive_Function_Payload is
      Object_Payload range 64 .. 255;

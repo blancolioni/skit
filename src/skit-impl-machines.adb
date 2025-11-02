@@ -427,6 +427,16 @@ package body Skit.Impl.Machines is
                      This.R_Cp := @ + 1;
                   end if;
 
+               when Payload_Sequence =>
+                  if This.Pop (Control, This.R (1 .. 2)) then
+                     This.Push (This.R (1));
+                     This.Push (Seq_Value);
+                     This.Apply;
+                     This.Push (Secondary_Stack, This.Pop);
+                     This.Push (Control, This.Right (This.R (2)));
+                     Changed := True;
+                  end if;
+
                when Primitive_Function_Payload =>
                   declare
                      P : constant Natural :=
@@ -482,52 +492,59 @@ package body Skit.Impl.Machines is
          if not Changed
            and then This.Internal (Secondary_Stack) /= Nil
            and then This.Top (Secondary_Stack).Tag = Application_Object
-           and then This.Right (This.Top (Secondary_Stack)) = Suspension
          then
-            if This.Trace then
-               Ada.Text_IO.Put_Line
-                 ("suspension: "
-                  & Skit.Debug.Image
-                    (This.Top (Secondary_Stack), This'Access));
-            end if;
-            if This.Left (This.Top (Secondary_Stack)).Tag
-              = Primitive_Object
-            then
-               declare
-                  P : constant Object :=
-                        This.Left (This.Pop (Secondary_Stack));
-                  P_Index : constant Natural :=
-                              Natural
-                                (P.Payload - Primitive_Function_Payload'First);
-                  Fn      : constant Skit.Primitives.Abstraction'Class :=
-                              This.Prims (P_Index);
-               begin
-                  Fn.Evaluate (This);
-                  Update (This.Pop (Secondary_Stack), This.Top);
-                  This.Push (Control, This.Pop);
-               end;
-            else
-               This.Push
-                 (Control,
-                  This.Right
-                    (This.Right (This.Left (This.Top (Secondary_Stack)))));
-               This.Push
-                 (This.Left (This.Left (This.Pop (Secondary_Stack))));
-               This.Push
-                 (Suspension);
-               This.Apply;
-               This.Push (Secondary_Stack, This.Pop);
+            if This.Right (This.Top (Secondary_Stack)) = Suspension then
                if This.Trace then
                   Ada.Text_IO.Put_Line
-                    ("remaining suspension: "
+                    ("suspension: "
                      & Skit.Debug.Image
                        (This.Top (Secondary_Stack), This'Access));
-                  Ada.Text_IO.Put_Line
-                    ("new control: "
-                     & Skit.Debug.Image (This.Top (Control), This'Access));
                end if;
+               if This.Left (This.Top (Secondary_Stack)).Tag
+                 = Primitive_Object
+               then
+                  declare
+                     P       : constant Object :=
+                                 This.Left (This.Pop (Secondary_Stack));
+                     P_Index : constant Natural :=
+                                 Natural
+                                   (P.Payload
+                                    - Primitive_Function_Payload'First);
+                     Fn      : constant Skit.Primitives.Abstraction'Class :=
+                                 This.Prims (P_Index);
+                  begin
+                     Fn.Evaluate (This);
+                     Update (This.Pop (Secondary_Stack), This.Top);
+                     This.Push (Control, This.Pop);
+                  end;
+               else
+                  This.Push
+                    (Control,
+                     This.Right
+                       (This.Right (This.Left (This.Top (Secondary_Stack)))));
+                  This.Push
+                    (This.Left (This.Left (This.Pop (Secondary_Stack))));
+                  This.Push
+                    (Suspension);
+                  This.Apply;
+                  This.Push (Secondary_Stack, This.Pop);
+                  if This.Trace then
+                     Ada.Text_IO.Put_Line
+                       ("remaining suspension: "
+                        & Skit.Debug.Image
+                          (This.Top (Secondary_Stack), This'Access));
+                     Ada.Text_IO.Put_Line
+                       ("new control: "
+                        & Skit.Debug.Image (This.Top (Control), This'Access));
+                  end if;
+               end if;
+               Changed := True;
+            elsif This.Right (This.Top (Secondary_Stack)) = Seq_Value then
+               This.Drop;
+               This.Push (Control,
+                          This.Right (This.Left (This.Pop (Secondary_Stack))));
+               Changed := True;
             end if;
-            Changed := True;
          end if;
 
       end loop;

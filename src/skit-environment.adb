@@ -131,6 +131,8 @@ package body Skit.Environment is
             return Skit.B;
          elsif Tok = "C" then
             return Skit.C;
+         elsif Tok = "seq" then
+            return Skit.Sequence;
          else
             declare
                Value : constant Object := This.Lookup (Tok);

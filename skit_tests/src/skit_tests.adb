@@ -96,5 +96,6 @@ begin
          8);
    Test ("sum (fromTo 1 100)", 5050);
    Test ("(\x.+ x x) (+ 4 (trace 5))", 18);
+   Test ("seq (+ 1 2) (+ 2 3)", 5);
    Report;
 end Skit_Tests;
