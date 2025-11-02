@@ -226,6 +226,8 @@ package body Skit.Library is
       Bind ("#trace",
             Trace_Instance'
               (Env => Skit.Environment.Reference (Environment)));
+      Environment.Evaluate ("!Y S S I (C B (S I I))");
+      Environment.Machine.Drop;
    end Load_Primitives;
 
    ---------------------------

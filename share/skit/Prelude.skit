@@ -2,7 +2,6 @@
 !false \x.\y.y
 !true \x.\y.x
 !if \c.\t.\f.c t f
-!Y S S I (C B (S I I))
 !flip \f.\x.\y.f y x
 !+ #add
 !- #sub
