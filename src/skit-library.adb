@@ -228,6 +228,8 @@ package body Skit.Library is
               (Env => Skit.Environment.Reference (Environment)));
       Environment.Evaluate ("!Y S S I (C B (S I I))");
       Environment.Machine.Drop;
+      Environment.Evaluate ("!#seq seq");
+      Environment.Machine.Drop;
    end Load_Primitives;
 
    ---------------------------
