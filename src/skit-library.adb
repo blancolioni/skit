@@ -8,6 +8,21 @@ with Skit.Stacks;
 
 package body Skit.Library is
 
+   type Constant_Instance is
+     new Skit.Primitives.Abstraction with
+      record
+         Value : Skit.Object;
+      end record;
+
+   overriding function Argument_Count
+     (This : Constant_Instance)
+      return Natural
+   is (0);
+
+   overriding procedure Evaluate
+     (This    : Constant_Instance;
+      Stack   : in out Skit.Stacks.Abstraction'Class);
+
    type Prim_Int_Op is access
      function (X, Y : Integer) return Integer;
 
@@ -112,6 +127,18 @@ package body Skit.Library is
      (This : in out IO_Instance'Class;
       FD   : Natural;
       Ch   : Wide_Wide_Character);
+
+   --------------
+   -- Evaluate --
+   --------------
+
+   overriding procedure Evaluate
+     (This    : Constant_Instance;
+      Stack   : in out Skit.Stacks.Abstraction'Class)
+   is
+   begin
+      Stack.Push (This.Value);
+   end Evaluate;
 
    --------------
    -- Evaluate --
@@ -226,6 +253,13 @@ package body Skit.Library is
       Bind ("#trace",
             Trace_Instance'
               (Env => Skit.Environment.Reference (Environment)));
+      Bind ("#minInt",
+            Constant_Instance'
+              (Value => Skit.To_Object (Skit.Min_Integer)));
+      Bind ("#maxInt",
+            Constant_Instance'
+              (Value => Skit.To_Object (Skit.Max_Integer)));
+
       Environment.Evaluate ("!Y S S I (C B (S I I))");
       Environment.Machine.Drop;
       Environment.Evaluate ("!#seq seq");

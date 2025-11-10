@@ -452,6 +452,7 @@ package body Skit.Impl.Machines is
                         begin
                            if Arg_Count = 0 then
                               Fn.Evaluate (This);
+                              This.Push (Control, This.Pop);
                               Changed := True;
                            else
                               This.Push (It);
