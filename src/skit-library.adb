@@ -48,13 +48,13 @@ package body Skit.Library is
    function Add (X, Y : Integer) return Integer is (X + Y);
    function Sub (X, Y : Integer) return Integer is (X - Y);
    function Mul (X, Y : Integer) return Integer is (X * Y);
-   function Int_Div (X, Y : Integer) return Integer is (X * Y);
+   function Int_Div (X, Y : Integer) return Integer is (X / Y);
    function Int_Mod (X, Y : Integer) return Integer is (X mod Y);
 
    function Add (X, Y : Float) return Float is (X + Y);
    function Sub (X, Y : Float) return Float is (X - Y);
    function Mul (X, Y : Float) return Float is (X * Y);
-   function Div (X, Y : Float) return Float is (X * Y);
+   function Div (X, Y : Float) return Float is (X / Y);
 
    type Predicate_Op is access
      function (X, Y : Object) return Boolean;
