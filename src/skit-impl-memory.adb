@@ -63,6 +63,7 @@ package body Skit.Impl.Memory is
       GC (This);
 
       if This.Free = This.Top then
+         Report (This);
          raise Constraint_Error with "out of memory";
       end if;
 
