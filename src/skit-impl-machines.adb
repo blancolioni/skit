@@ -150,16 +150,6 @@ package body Skit.Impl.Machines is
    procedure Evaluate_Application
      (This  : in out Instance'Class);
 
-   procedure Reset_State
-     (This      : in out Instance'Class;
-      Stack_Top : Object)
-     with Unreferenced;
-
-   procedure Restore_State
-     (This      : in out Instance'Class;
-      Stack_Top : Object)
-     with Unreferenced;
-
    -------------------
    -- Add_Container --
    -------------------
@@ -552,17 +542,11 @@ package body Skit.Impl.Machines is
 
       This.Push (It);
 
-      declare
-         Count : Natural := 0;
-      begin
-         while This.Internal (Control) /= Nil loop
-            This.Push
-              (Skit.Impl.Memory.Right (This.Core.all, This.Pop (Control)));
-            This.Apply;
-            Count := Count + 1;
-         end loop;
-      end;
-
+      while This.Internal (Control) /= Nil loop
+         This.Push
+            (Skit.Impl.Memory.Right (This.Core.all, This.Pop (Control)));
+         This.Apply;
+      end loop;
    end Evaluate_Application;
 
    ----------
@@ -710,41 +694,6 @@ package body Skit.Impl.Machines is
          & "; C'" & This.R_Cp'Image);
       Skit.Impl.Memory.Report (This.Core.all);
    end Report;
-
-   -----------------
-   -- Reset_State --
-   -----------------
-
-   procedure Reset_State
-     (This      : in out Instance'Class;
-      Stack_Top : Object)
-   is
-   begin
-      This.Locals (1) := Stack_Top;
-      This.Push (Dump, This.Internal (Control));
-      This.Push (Dump, This.Internal (Secondary_Stack));
-      This.Push (Dump, This.Internal (Stack));
-      This.Internal (Control) := Nil;
-      This.Internal (Secondary_Stack) := Nil;
-      This.Internal (Control) := Nil;
-      This.Push (Stack, This.Locals (1));
-   end Reset_State;
-
-   -------------------
-   -- Restore_State --
-   -------------------
-
-   procedure Restore_State
-     (This      : in out Instance'Class;
-      Stack_Top : Object)
-   is
-   begin
-      This.R (1) := Stack_Top;
-      This.Internal (Stack) := This.Pop (Dump);
-      This.Push (Stack, This.R (1));
-      This.Internal (Secondary_Stack) := This.Pop (Dump);
-      This.Internal (Control) := This.Pop (Dump);
-   end Restore_State;
 
    ---------
    -- Set --
