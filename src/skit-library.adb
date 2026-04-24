@@ -118,6 +118,18 @@ package body Skit.Library is
      (This    : Trace_Instance;
       Stack   : in out Skit.Stacks.Abstraction'Class);
 
+   type Error_Instance is
+     new Skit.Primitives.Abstraction with null record;
+
+   overriding function Argument_Count
+     (This : Error_Instance)
+      return Natural
+   is (0);
+
+   overriding procedure Evaluate
+     (This    : Error_Instance;
+      Stack   : in out Skit.Stacks.Abstraction'Class);
+
    type IO_Instance is new Skit.Interfaces.Abstraction with
       record
          null;
@@ -214,6 +226,22 @@ package body Skit.Library is
         ("[TRACE] " & Skit.Debug.Image (Stack.Top, This.Env.Machine));
    end Evaluate;
 
+   --------------
+   -- Evaluate --
+   --------------
+
+   overriding procedure Evaluate
+     (This    : Error_Instance;
+      Stack   : in out Skit.Stacks.Abstraction'Class)
+   is
+      pragma Unreferenced (This, Stack);
+   begin
+      Ada.Text_IO.Put_Line
+        (Ada.Text_IO.Standard_Error,
+         "*** Exception: pattern match failure");
+      raise Program_Error with "pattern match failure";
+   end Evaluate;
+
    ---------------------
    -- Load_Primitives --
    ---------------------
@@ -253,6 +281,7 @@ package body Skit.Library is
       Bind ("#trace",
             Trace_Instance'
               (Env => Skit.Environment.Reference (Environment)));
+      Bind ("#error", Error_Instance'(null record));
       Bind ("#minInt",
             Constant_Instance'
               (Value => Skit.To_Object (Skit.Min_Integer)));
@@ -263,6 +292,7 @@ package body Skit.Library is
       Environment.Evaluate ("!Y S S I (C B (S I I))");
       Environment.Machine.Drop;
       Environment.Evaluate ("!#seq seq");
+      Environment.Evaluate ("!#id I");
       Environment.Machine.Drop;
    end Load_Primitives;
 
