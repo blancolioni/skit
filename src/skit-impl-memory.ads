@@ -24,13 +24,13 @@ private package Skit.Impl.Memory is
      (This : Instance;
       App  : Object)
       return Object
-     with Inline;
+     with Inline_Always;
 
    function Right
      (This : Instance;
       App  : Object)
       return Object
-     with Inline;
+     with Inline_Always;
 
    procedure Set_Left
      (This : in out Instance;
