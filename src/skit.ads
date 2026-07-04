@@ -28,6 +28,11 @@ package Skit is
    function To_Object (X : Integer) return Object;
    function To_Object (X : Float) return Object;
 
+   function Is_Integer (X : Object) return Boolean;
+
+   function To_Integer (X : Object) return Integer
+     with Pre => Is_Integer (X);
+
    function Is_Application (X : Object) return Boolean;
 
    type Variable_Index is range 1 .. 999;
@@ -89,9 +94,6 @@ private
 
    function Is_Integer (X : Object) return Boolean
    is (X.Tag = Integer_Object);
-
-   function To_Integer (X : Object) return Integer
-     with Pre => Is_Integer (X);
 
    function To_Float (X : Object) return Float;
 
