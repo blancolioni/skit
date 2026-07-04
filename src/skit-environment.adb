@@ -95,6 +95,20 @@ package body Skit.Environment is
      (This : in out Instance;
       Expr : String)
    is
+   begin
+      This.Parse (Expr);
+      This.Machine.Evaluate;
+   end Evaluate;
+
+   -----------
+   -- Parse --
+   -----------
+
+   procedure Parse
+     (This : in out Instance;
+      Expr : String)
+   is
+
       package Variable_Vectors is
         new Ada.Containers.Indefinite_Vectors (Natural, String);
 
@@ -131,6 +145,10 @@ package body Skit.Environment is
             return Skit.B;
          elsif Tok = "C" then
             return Skit.C;
+         elsif Tok = "B*" then
+            return Skit.B_Star;
+         elsif Tok = "C'" then
+            return Skit.C_Prime;
          elsif Tok = "seq" then
             return Skit.Sequence;
          else
@@ -160,12 +178,12 @@ package body Skit.Environment is
             end;
          end if;
       end To_Object;
+
    begin
       Skit.Parser.Parse
         (Expr, To_Object'Access, Bind_Value'Access, This.Machine);
       Skit.Compiler.Compile (This.Machine);
-      This.Machine.Evaluate;
-   end Evaluate;
+   end Parse;
 
    ----------
    -- Load --

@@ -24,6 +24,11 @@ package Skit.Environment is
       Expr : String);
    --  Evaluate Expr and leave the result on top of the stack
 
+   procedure Parse
+     (This : in out Instance;
+      Expr : String);
+   --  Parse Expr and leave the result on top of the stack
+
    function Machine
      (This : Instance)
       return Skit.Machine.Reference;
