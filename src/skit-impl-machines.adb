@@ -1,3 +1,4 @@
+with Ada.Calendar;
 with Ada.Containers.Indefinite_Vectors;
 with Ada.Strings.Equal_Case_Insensitive;
 with Ada.Text_IO;
@@ -25,22 +26,23 @@ package body Skit.Impl.Machines is
 
    type Instance is new Parent and Skit.Containers.Abstraction with
       record
-         Core       : Skit.Impl.Memory.Reference;
-         Internal   : Internal_Register_Array := [others        => Nil];
-         R          : Object_Array (Register) := [others        => Nil];
-         Locals     : Object_Array (1 .. Max_Locals) := [others => Nil];
-         Temps      : Temporary_Array := [others => Nil];
-         Prims      : Primitive_Function_Vectors.Vector;
-         Trace      : Boolean := False;
-         Reductions : Natural := 0;
-         R_I        : Natural := 0;
-         R_K        : Natural := 0;
-         R_S        : Natural := 0;
-         R_B        : Natural := 0;
-         R_C        : Natural := 0;
-         R_Sp       : Natural := 0;
-         R_Bs       : Natural := 0;
-         R_Cp       : Natural := 0;
+         Core          : Skit.Impl.Memory.Reference;
+         Internal      : Internal_Register_Array := [others        => Nil];
+         R             : Object_Array (Register) := [others        => Nil];
+         Locals        : Object_Array (1 .. Max_Locals) := [others => Nil];
+         Temps         : Temporary_Array := [others => Nil];
+         Prims         : Primitive_Function_Vectors.Vector;
+         Eval_Duration : Duration := 0.0;
+         Trace         : Boolean := False;
+         Reductions    : Natural := 0;
+         R_I           : Natural := 0;
+         R_K           : Natural := 0;
+         R_S           : Natural := 0;
+         R_B           : Natural := 0;
+         R_C           : Natural := 0;
+         R_Sp          : Natural := 0;
+         R_Bs          : Natural := 0;
+         R_Cp          : Natural := 0;
       end record;
    type Reference is access all Instance'Class;
 
@@ -217,6 +219,7 @@ package body Skit.Impl.Machines is
    overriding procedure Evaluate
      (This : in out Instance)
    is
+      Start : constant Ada.Calendar.Time := Ada.Calendar.Clock;
       X : constant Object := This.Pop;
    begin
       if This.Trace then
@@ -238,6 +241,13 @@ package body Skit.Impl.Machines is
          Ada.Text_IO.Put_Line
            ("} result: " & Debug.Image (This.Top, This'Access));
       end if;
+      declare
+         use Ada.Calendar;
+         Finish : constant Time := Clock;
+         Elapsed : constant Duration := Finish - Start;
+      begin
+         This.Eval_Duration := @ + Elapsed;
+      end;
    end Evaluate;
 
    --------------------------
@@ -430,15 +440,15 @@ package body Skit.Impl.Machines is
                when Primitive_Function_Payload =>
                   declare
                      P : constant Natural :=
-                           Natural
-                             (It.Payload - Primitive_Function_Payload'First);
+                       Natural
+                         (It.Payload - Primitive_Function_Payload'First);
                   begin
                      if P <= This.Prims.Last_Index then
                         declare
                            Fn : constant Skit.Primitives.Abstraction'Class :=
-                                  This.Prims (P);
+                             This.Prims (P);
                            Arg_Count : constant Natural :=
-                                         Fn.Argument_Count;
+                             Fn.Argument_Count;
                         begin
                            if Arg_Count = 0 then
                               Fn.Evaluate (This);
@@ -496,13 +506,13 @@ package body Skit.Impl.Machines is
                then
                   declare
                      P       : constant Object :=
-                                 This.Left (This.Pop (Secondary_Stack));
+                       This.Left (This.Pop (Secondary_Stack));
                      P_Index : constant Natural :=
-                                 Natural
-                                   (P.Payload
-                                    - Primitive_Function_Payload'First);
+                       Natural
+                         (P.Payload
+                          - Primitive_Function_Payload'First);
                      Fn      : constant Skit.Primitives.Abstraction'Class :=
-                                 This.Prims (P_Index);
+                       This.Prims (P_Index);
                   begin
                      Fn.Evaluate (This);
                      Update (This.Pop (Secondary_Stack), This.Top);
@@ -544,7 +554,7 @@ package body Skit.Impl.Machines is
 
       while This.Internal (Control) /= Nil loop
          This.Push
-            (Skit.Impl.Memory.Right (This.Core.all, This.Pop (Control)));
+           (Skit.Impl.Memory.Right (This.Core.all, This.Pop (Control)));
          This.Apply;
       end loop;
    end Evaluate_Application;
@@ -682,6 +692,10 @@ package body Skit.Impl.Machines is
    is
    begin
       Ada.Text_IO.Put_Line ("reductions:" & This.Reductions'Image);
+      Ada.Text_IO.Put_Line ("elapsed:   "
+                            & Natural'Image
+                              (Natural (This.Eval_Duration * 1000.0))
+                            & "ms");
       Ada.Text_IO.Put_Line
         ("per combinator: "
          & "I" & This.R_I'Image
