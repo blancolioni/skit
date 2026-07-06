@@ -606,17 +606,18 @@ package body Skit.Impl.Machines is
       return Boolean
    is
       S : Object := This.Internal (Stack);
+      Loc : Object_Array renames This.Locals (1 .. Values'Length);
    begin
-      for I in reverse 1 .. Values'Length loop
+      for X of reverse Loc loop
          if S = Nil then
             return False;
          end if;
-         This.Locals (I) := Skit.Impl.Memory.Left (This.Core.all, S);
+         X := Skit.Impl.Memory.Left (This.Core.all, S);
          S := Skit.Impl.Memory.Right (This.Core.all, S);
       end loop;
-      Values := This.Locals (1 .. Values'Length);
+      Values := Loc;
       This.Internal (Stack) := S;
-      This.Locals := [others => Nil];
+      Loc := [others => Nil];
       return True;
    end Pop;
 
@@ -658,14 +659,15 @@ package body Skit.Impl.Machines is
       Stack  : Internal_Register;
       Values : in out Object_Array)
    is
+      Loc : Object_Array renames This.Locals (1 .. Values'Length);
    begin
-      This.Locals (1 .. Values'Length) := Values;
-      for V of This.Locals (1 .. Values'Length) loop
+      Loc := Values;
+      for V of Loc loop
          This.Internal (Stack) :=
            Skit.Impl.Memory.Allocate (This.Core.all, V, This.Internal (Stack));
       end loop;
-      Values := This.Locals (1 .. Values'Length);
-      This.Locals := [others => Nil];
+      Values := Loc;
+      Loc := [others => Nil];
    end Push;
 
    ----------
