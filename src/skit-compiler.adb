@@ -1,219 +1,154 @@
 package body Skit.Compiler is
 
-   Do_Opt : constant Boolean := True;
-   Indent : Natural := 0;
+   function Abstract_Variable
+     (Variable : String;
+      Top      : Skit.Terms.Term)
+      return Skit.Terms.Term;
 
-   procedure Abstract_Variable
-     (Machine : Skit.Machine.Reference;
-      Variable : Object);
-
-   procedure Optimise
-     (Machine : Skit.Machine.Reference);
+   function Optimise
+     (Top      : Skit.Terms.Term)
+      return Skit.Terms.Term;
 
    -----------------------
    -- Abstract_Variable --
    -----------------------
 
-   procedure Abstract_Variable
-     (Machine : Skit.Machine.Reference;
-      Variable : Object)
+   function Abstract_Variable
+     (Variable : String;
+      Top      : Skit.Terms.Term)
+      return Skit.Terms.Term
    is
-      Top : constant Object := Machine.Pop;
+      use Skit.Terms;
    begin
-      Indent := Indent + 2;
-      case Top.Tag is
-         when Application_Object =>
-            Machine.Set (0, Machine.Left (Top));
-            Machine.Set (1, Machine.Right (Top));
-            Machine.Push (Machine.Get (1));
-            Machine.Push (Machine.Get (0));
-            Abstract_Variable (Machine, Variable);
-            Machine.Set (0, Machine.Pop);
-            Machine.Set (1, Machine.Pop);
-            Machine.Push (Machine.Get (0));
-            Machine.Push (Machine.Get (1));
-            Abstract_Variable (Machine, Variable);
-            Machine.Set (0, Machine.Pop);
-            Machine.Set (1, Machine.Pop);
-            Machine.Push (Skit.S);
-            Machine.Push (Machine.Get (1));
-            Machine.Apply;
-            Machine.Push (Machine.Get (0));
-            Machine.Apply;
-            if Do_Opt then
-               Optimise (Machine);
-            end if;
-         when others =>
-            if Top = Variable then
-               Machine.Push (I);
-            else
-               Machine.Push (K);
-               Machine.Push (Top);
-               Machine.Apply;
-            end if;
-      end case;
-      Indent := Indent - 2;
+      if Skit.Terms.Is_Application (Top) then
+         return Optimise
+           (Apply
+              (Apply
+                   (Combinator (Skit.S),
+                    Abstract_Variable (Variable, Get_Left (Top))),
+            Abstract_Variable (Variable, Get_Right (Top))));
+      elsif Is_Symbol (Top)
+        and then Get_Symbol (Top) = Variable
+      then
+         return Combinator (Skit.I);
+      else
+         return Apply (Combinator (Skit.K), Top);
+      end if;
    end Abstract_Variable;
 
    -------------
    -- Compile --
    -------------
 
-   procedure Compile
-     (Machine : Skit.Machine.Reference)
+   function Compile
+     (E : Skit.Terms.Term)
+      return Skit.Terms.Term
    is
-      Top : constant Object := Machine.Top;
+      use Skit.Terms;
    begin
-      Indent := Indent + 2;
-      case Top.Tag is
-         when Integer_Object =>
-            null;
-         when Primitive_Object =>
-            null;
-         when Application_Object =>
-            if Machine.Left (Top) = Lambda then
-               declare
-                  Variable : constant Object :=
-                               Machine.Left (Machine.Right (Top));
-                  Expression : constant Object :=
-                                 Machine.Right (Machine.Right (Top));
-               begin
-                  Machine.Drop;
-                  Machine.Push (Expression);
-                  Compile (Machine);
-                  Abstract_Variable (Machine, Variable);
-               end;
-            else
-               Machine.Set (0, Machine.Left (Top));
-               Machine.Set (1, Machine.Right (Top));
-               Machine.Drop;
-               Machine.Push (Machine.Get (1));
-               Machine.Push (Machine.Get (0));
-               Compile (Machine);
-               Machine.Set (0, Machine.Pop);
-               Machine.Set (1, Machine.Pop);
-               Machine.Push (Machine.Get (0));
-               Machine.Push (Machine.Get (1));
-               Compile (Machine);
-               Machine.Apply;
-            end if;
-         when Float_Object =>
-            null;
-      end case;
-      Indent := Indent - 2;
+      if Is_Lambda (E) then
+         return Abstract_Variable (Get_Variable (E),
+                                   Compile (Get_Body (E)));
+      elsif Is_Application (E) then
+         return Apply (Compile (Get_Left (E)), Compile (Get_Right (E)));
+      else
+         return E;
+      end if;
    end Compile;
 
    --------------
    -- Optimise --
    --------------
 
-   procedure Optimise
-     (Machine : Skit.Machine.Reference)
+   function Optimise
+     (Top      : Skit.Terms.Term)
+      return Skit.Terms.Term
    is
-      Top : constant Object := Machine.Top;
+      use Skit.Terms;
+
       function Is_S return Boolean
-      is (Top.Tag = Application_Object
-          and then Machine.Left (Top).Tag = Application_Object
-          and then Machine.Left (Machine.Left (Top)) = S);
+      is (Is_Application (Top)
+          and then Is_Application (Get_Left (Top))
+          and then Is_Combinator (Get_Left (Get_Left (Top)), Skit.S));
 
-      function Is_App_K (O : Object) return Boolean
-      is (O.Tag = Application_Object
-          and then Machine.Left (O) = K);
+      function Is_App_K (T : Term) return Boolean
+      is (Is_Application (T)
+          and then Is_Combinator (Get_Left (T), Skit.K));
 
-      function App_K (O : Object) return Object
-      is (Machine.Right (O));
+      function App_K (T : Term) return Term
+      is (Get_Right (T));
 
-      function Is_App_B (O : Object) return Boolean
-      is (O.Tag = Application_Object
-          and then Machine.Left (O).Tag = Application_Object
-          and then Machine.Left (Machine.Left (O)) = B);
+      function Is_App_B (T : Term) return Boolean
+      is (Is_Application (T)
+          and then Is_Application (Get_Left (T))
+          and then Is_Combinator (Get_Left (Get_Left (T)), Skit.B));
 
-      function App_B_Q (O : Object) return Object
-      is (Machine.Right (Machine.Left (O)));
+      function App_B_Q (T : Term) return Term
+      is (Get_Right (Get_Left (T)));
 
-      function App_B_R (O : Object) return Object
-      is (Machine.Right (O));
+      function App_B_R (T : Term) return Term
+      is (Get_Right (T));
 
-      X : constant Object :=
-            (if Is_S then Machine.Right (Machine.Left (Top)) else Nil);
-      Y : constant Object :=
+      X : constant Term :=
             (if Is_S
-             then Machine.Right (Top)
-             else Nil);
+             then Get_Right (Get_Left (Top))
+             else Primitive (Skit.Nil));
+
+      Y : constant Term :=
+            (if Is_S
+             then Get_Right (Top)
+             else Primitive (Skit.Nil));
    begin
       if Is_S then
          if Is_App_K (X) then
             if Is_App_K (Y) then
-               Machine.Set (0, App_K (X));
-               Machine.Set (1, App_K (Y));
-               Machine.Drop;
-               Machine.Push (K);
-               Machine.Push (Machine.Get (0));
-               Machine.Push (Machine.Get (1));
-               Machine.Apply;
-               Machine.Apply;
-            elsif Y = I then
-               Machine.Set (0, App_K (X));
-               Machine.Drop;
-               Machine.Push (Machine.Get (0));
+               return Apply (Combinator (Skit.K),
+                             Apply (App_K (X), App_K (Y)));
+            elsif Is_Combinator (Y, Skit.I) then
+               return App_K (X);
             elsif Is_App_B (Y) then
-               Machine.Set (0, App_K (X));
-               Machine.Set (1, App_B_Q (Y));
-               Machine.Set (2, App_B_R (Y));
-               Machine.Drop;
-               Machine.Push (B_Star);
-               Machine.Push (Machine.Get (0));
-               Machine.Apply;
-               Machine.Push (Machine.Get (1));
-               Machine.Apply;
-               Machine.Push (Machine.Get (2));
-               Machine.Apply;
+               return Apply
+                 (Apply
+                    (Apply
+                         (Combinator (Skit.B_Star),
+                          App_K (X)),
+                     App_B_Q (Y)),
+                  App_B_R (Y));
             else
-               Machine.Set (0, App_K (X));
-               Machine.Set (1, Y);
-               Machine.Drop;
-               Machine.Push (B);
-               Machine.Push (Machine.Get (0));
-               Machine.Apply;
-               Machine.Push (Machine.Get (1));
-               Machine.Apply;
+               return Apply
+                 (Apply
+                    (Combinator (Skit.B),
+                     App_K (X)),
+                  Y);
             end if;
          elsif Is_App_K (Y) then
             if Is_App_B (X) then
-               Machine.Set (0, App_B_Q (X));
-               Machine.Set (1, App_B_R (X));
-               Machine.Set (2, App_K (Y));
-               Machine.Drop;
-               Machine.Push (C_Prime);
-               Machine.Push (Machine.Get (0));
-               Machine.Apply;
-               Machine.Push (Machine.Get (1));
-               Machine.Apply;
-               Machine.Push (Machine.Get (2));
-               Machine.Apply;
+               return Apply
+                 (Apply
+                    (Apply
+                         (Combinator (Skit.C_Prime),
+                          App_B_Q (X)),
+                     App_B_R (X)),
+                  App_K (Y));
             else
-               Machine.Set (0, X);
-               Machine.Set (1, App_K (Y));
-               Machine.Drop;
-               Machine.Push (C);
-               Machine.Push (Machine.Get (0));
-               Machine.Apply;
-               Machine.Push (Machine.Get (1));
-               Machine.Apply;
+               return Apply
+                 (Apply
+                    (Combinator (Skit.C), X),
+                  App_K (Y));
             end if;
          elsif Is_App_B (X) then
-            Machine.Set (0, App_B_Q (X));
-            Machine.Set (1, App_B_R (X));
-            Machine.Set (2, Y);
-            Machine.Drop;
-            Machine.Push (S_Prime);
-            Machine.Push (Machine.Get (0));
-            Machine.Apply;
-            Machine.Push (Machine.Get (1));
-            Machine.Apply;
-            Machine.Push (Machine.Get (2));
-            Machine.Apply;
+            return Apply
+              (Apply
+                 (Apply
+                      (Combinator (Skit.S_Prime),
+                       App_B_Q (X)),
+                  App_B_R (X)),
+               Y);
+         else
+            return Top;
          end if;
+      else
+         return Top;
       end if;
    end Optimise;
 

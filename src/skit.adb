@@ -21,9 +21,9 @@ package body Skit is
    -- To_Float --
    --------------
 
-   function To_Float (X : Object) return Float is
+   function To_Float (X : Object) return Long_Float is
    begin
-      return To_Float (Transfer_Word (X.Payload) * 4);
+      return Long_Float (To_Float (Transfer_Word (X.Payload) * 4));
    end To_Float;
 
    ----------------
@@ -58,6 +58,15 @@ package body Skit is
       W : constant Transfer_Word := To_Float_Word (X);
    begin
       return (Object_Payload (W / 4), Float_Object);
+   end To_Object;
+
+   ---------------
+   -- To_Object --
+   ---------------
+
+   function To_Object (X : Long_Float) return Object is
+   begin
+      return To_Object (Float (X));
    end To_Object;
 
 end Skit;

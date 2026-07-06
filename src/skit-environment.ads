@@ -4,10 +4,15 @@ with Skit.Containers;
 with Skit.Interfaces;
 with Skit.Machine;
 with Skit.Primitives;
+with Skit.Terms;
 
 package Skit.Environment is
 
-   type Instance is new Skit.Containers.Abstraction with private;
+   type Instance is
+     new Skit.Containers.Abstraction
+     and Skit.Terms.Resolver_Interface
+   with private;
+
    type Reference is access all Instance'Class;
 
    function Create
@@ -73,7 +78,9 @@ private
      new Ada.Containers.Indefinite_Ordered_Maps
        (String, Skit.Interfaces.Reference, "<", Skit.Interfaces."=");
 
-   type Instance is new Skit.Containers.Abstraction with
+   type Instance is
+     new Skit.Containers.Abstraction
+     and Skit.Terms.Resolver_Interface with
       record
          Machine  : Skit.Machine.Reference;
          Bindings : Binding_Maps.Map;
@@ -86,5 +93,10 @@ private
      (This : in out Instance;
       Set  : not null access
         procedure (Item : in out Object));
+
+   overriding function Resolve
+     (This : Instance;
+      Name : String)
+      return Object;
 
 end Skit.Environment;

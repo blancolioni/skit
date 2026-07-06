@@ -46,6 +46,31 @@ package body Skit.Impl.Memory is
       This.Containers.Append (Container_Reference (Container));
    end Add_Container;
 
+   ------------
+   -- Append --
+   ------------
+
+   function Append
+     (This   : in out Instance;
+      Left   : Object;
+      Right  : Object)
+      return Object
+   is
+      Result : constant Object := (This.Free, Application_Object);
+   begin
+      if This.Free >= This.Top then
+         Report (This);
+         raise Constraint_Error with
+           "machine memory overflow in Append: free ="
+           & This.Free'Image & "; top =" & This.Top'Image;
+      end if;
+      This.Core (This.Free) := (Left, Right);
+      This.Free := This.Free + 1;
+      This.Alloc_Count := This.Alloc_Count + 1;
+      This.Total_Alloc_Count := @ + 1;
+      return Result;
+   end Append;
+
    -----------------------
    -- Free_And_Allocate --
    -----------------------
@@ -70,7 +95,7 @@ package body Skit.Impl.Memory is
       Left := This.Alloc_Left;
       Right := This.Alloc_Right;
 
-      return Quick_Allocate (This, Left, Right);
+      return Append (This, Left, Right);
    end Free_And_Allocate;
 
    ----------
@@ -259,25 +284,6 @@ package body Skit.Impl.Memory is
       end;
 
    end Move;
-
-   --------------------
-   -- Quick_Allocate --
-   --------------------
-
-   function Quick_Allocate
-     (This   : in out Instance;
-      Left   : Object;
-      Right  : Object)
-      return Object
-   is
-      Result : constant Object := (This.Free, Application_Object);
-   begin
-      This.Core (This.Free) := (Left, Right);
-      This.Free := This.Free + 1;
-      This.Alloc_Count := This.Alloc_Count + 1;
-      This.Total_Alloc_Count := @ + 1;
-      return Result;
-   end Quick_Allocate;
 
    ------------
    -- Report --
