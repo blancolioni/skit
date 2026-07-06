@@ -27,11 +27,15 @@ package Skit is
 
    function To_Object (X : Integer) return Object;
    function To_Object (X : Float) return Object;
+   function To_Object (X : Long_Float) return Object;
 
    function Is_Integer (X : Object) return Boolean;
-
    function To_Integer (X : Object) return Integer
      with Pre => Is_Integer (X);
+
+   function Is_Float (X : Object) return Boolean;
+   function To_Float (X : Object) return Long_Float
+     with Pre => Is_Float (X);
 
    function Is_Application (X : Object) return Boolean;
 
@@ -95,7 +99,8 @@ private
    function Is_Integer (X : Object) return Boolean
    is (X.Tag = Integer_Object);
 
-   function To_Float (X : Object) return Float;
+   function Is_Float (X : Object) return Boolean
+   is (X.Tag = Float_Object);
 
    function To_Variable_Object (Index : Variable_Index) return Object
    is (Object_Payload (Index) + Primitive_Variable_Payload'First,

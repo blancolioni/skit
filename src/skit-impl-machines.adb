@@ -53,6 +53,11 @@ package body Skit.Impl.Machines is
    overriding procedure Apply
      (This : in out Instance);
 
+   overriding function Build_Apply
+     (This        : in out Instance;
+      Left, Right : Object)
+      return Object;
+
    overriding function Bind
      (This      : in out Instance;
       Primitive : Skit.Primitives.Abstraction'Class)
@@ -180,6 +185,19 @@ package body Skit.Impl.Machines is
       This.Push
         (Skit.Impl.Memory.Allocate (This.Core.all, Args (1), Args (2)));
    end Apply;
+
+   -----------------
+   -- Build_Apply --
+   -----------------
+
+   overriding function Build_Apply
+     (This        : in out Instance;
+      Left, Right : Object)
+      return Object
+   is
+   begin
+      return Skit.Impl.Memory.Append (This.Core.all, Left, Right);
+   end Build_Apply;
 
    ----------
    -- Bind --

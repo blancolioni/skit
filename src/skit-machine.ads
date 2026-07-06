@@ -1,3 +1,4 @@
+with Skit.Builder;
 with Skit.Evaluator;
 with Skit.Memory;
 with Skit.Primitives;
@@ -6,6 +7,7 @@ with Skit.Stacks;
 package Skit.Machine is
 
    type Abstraction is interface
+     and Skit.Builder.Abstraction
      and Skit.Evaluator.Abstraction
      and Skit.Memory.Abstraction
      and Skit.Stacks.Abstraction;

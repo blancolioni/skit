@@ -20,6 +20,12 @@ private package Skit.Impl.Memory is
       Right  : in out Object)
       return Object;
 
+   function Append
+     (This   : in out Instance;
+      Left   : Object;
+      Right  : Object)
+      return Object;
+
    function Left
      (This : Instance;
       App  : Object)
@@ -97,13 +103,6 @@ private
       return Object
    is (This.Core (App.Payload).Right);
 
-   function Quick_Allocate
-     (This   : in out Instance;
-      Left   : Object;
-      Right  : Object)
-      return Object
-     with Inline_Always;
-
    function Free_And_Allocate
      (This   : in out Instance;
       Left   : in out Object;
@@ -116,7 +115,7 @@ private
       Right  : in out Object)
       return Object
    is (if This.Free < This.Top
-       then Quick_Allocate (This, Left, Right)
+       then Append (This, Left, Right)
        else Free_And_Allocate (This, Left, Right));
 
 end Skit.Impl.Memory;

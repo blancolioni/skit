@@ -1,4 +1,3 @@
-with Ada.Containers.Indefinite_Vectors;
 with Ada.Strings.Fixed;
 with Ada.Text_IO;
 with Skit.Compiler;
@@ -108,81 +107,38 @@ package body Skit.Environment is
      (This : in out Instance;
       Expr : String)
    is
-
-      package Variable_Vectors is
-        new Ada.Containers.Indefinite_Vectors (Natural, String);
-
-      Vrbs : Variable_Vectors.Vector;
-
-      function To_Object (Tok : String) return Skit.Object;
-      procedure Bind_Value (Name : String);
+      procedure Bind_Value
+        (Name : String;
+         Term : Skit.Terms.Term);
 
       ----------------
       -- Bind_Value --
       ----------------
 
-      procedure Bind_Value (Name : String) is
+      procedure Bind_Value
+        (Name : String;
+         Term : Skit.Terms.Term)
+      is
+         Compiled : constant Skit.Terms.Term :=
+                      Skit.Compiler.Compile (Term);
       begin
-         This.Bind (Name, This.Machine.Pop);
+         This.Bind
+           (Name,
+            Skit.Terms.Install
+              (Compiled, This'Access, This.Machine));
          This.Machine.Push (Nil);
       end Bind_Value;
 
-      ---------------
-      -- To_Object --
-      ---------------
-
-      function To_Object (Tok : String) return Skit.Object is
-      begin
-         if (for all Ch of Tok => Ch in '0' .. '9') then
-            return To_Object (Natural'Value (Tok));
-         elsif Tok = "I" then
-            return Skit.I;
-         elsif Tok = "S" then
-            return Skit.S;
-         elsif Tok = "K" then
-            return Skit.K;
-         elsif Tok = "B" then
-            return Skit.B;
-         elsif Tok = "C" then
-            return Skit.C;
-         elsif Tok = "B*" then
-            return Skit.B_Star;
-         elsif Tok = "C'" then
-            return Skit.C_Prime;
-         elsif Tok = "seq" then
-            return Skit.Sequence;
-         else
-            declare
-               Value : constant Object := This.Lookup (Tok);
-            begin
-               if Value /= Undefined then
-                  return Value;
-               end if;
-            end;
-
-            declare
-               use Variable_Vectors;
-               Position : constant Cursor :=
-                            Vrbs.Find (Tok);
-            begin
-               if Has_Element (Position) then
-                  return (Primitive_Variable_Payload'First
-                          + Object_Payload (To_Index (Position)),
-                          Primitive_Object);
-               else
-                  Vrbs.Append (Tok);
-                  return (Primitive_Variable_Payload'First
-                          + Object_Payload (Vrbs.Last_Index),
-                          Primitive_Object);
-               end if;
-            end;
-         end if;
-      end To_Object;
-
+      Parsed_Term : constant Skit.Terms.Term :=
+                      Skit.Parser.Parse
+                        (Expr, Bind_Value'Access);
+      Compiled_Term : constant Skit.Terms.Term :=
+                        Skit.Compiler.Compile (Parsed_Term);
+      Top           : constant Object :=
+                        Skit.Terms.Install
+                          (Compiled_Term, This'Access, This.Machine);
    begin
-      Skit.Parser.Parse
-        (Expr, To_Object'Access, Bind_Value'Access, This.Machine);
-      Skit.Compiler.Compile (This.Machine);
+      This.Machine.Push (Top);
    end Parse;
 
    ----------
@@ -264,6 +220,24 @@ package body Skit.Environment is
          Set (Binding);
       end loop;
    end Mark;
+
+   -------------
+   -- Resolve --
+   -------------
+
+   overriding function Resolve
+     (This : Instance;
+      Name : String)
+      return Object
+   is
+   begin
+      return Value : constant Object := This.Lookup (Name) do
+         if Value = Undefined then
+            raise Constraint_Error with
+              "undefined: " & Name;
+         end if;
+      end return;
+   end Resolve;
 
    ----------------------
    -- To_Symbol_Object --

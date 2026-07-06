@@ -1,9 +1,9 @@
-with Skit.Machine;
+with Skit.Terms;
 
 package Skit.Compiler is
 
-   procedure Compile
-     (Machine : Skit.Machine.Reference);
-   --  Compile the top of the stack
+   function Compile
+     (E : Skit.Terms.Term)
+      return Skit.Terms.Term;
 
 end Skit.Compiler;

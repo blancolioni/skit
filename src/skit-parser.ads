@@ -1,15 +1,13 @@
-with Skit.Machine;
+with Skit.Terms;
 
 package Skit.Parser is
 
    Parse_Error : exception;
 
-   procedure Parse
+   function Parse
      (Source    : String;
-      To_Object : not null access
-        function (X : String) return Object;
       Bind_Value : not null access
-        procedure (Name : String);
-      Machine   : not null access Skit.Machine.Abstraction'Class);
+        procedure (Name : String; Term : Skit.Terms.Term))
+      return Skit.Terms.Term;
 
 end Skit.Parser;

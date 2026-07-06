@@ -6,13 +6,11 @@ package body Skit.Parser is
    -- Parse --
    -----------
 
-   procedure Parse
+   function Parse
      (Source    : String;
-      To_Object : not null access
-        function (X : String) return Object;
       Bind_Value : not null access
-        procedure (Name : String);
-      Machine   : not null access Skit.Machine.Abstraction'Class)
+        procedure (Name : String; Term : Skit.Terms.Term))
+      return Skit.Terms.Term
    is
       Index : Natural := Source'First - 1;
       Ch    : Character := ' ';
@@ -37,25 +35,26 @@ package body Skit.Parser is
 
       procedure Skip_Spaces;
 
-      procedure Parse_Expression;
-      procedure Parse_Atomic;
+      function Parse_Expression return Skit.Terms.Term;
+      function Parse_Atomic return Skit.Terms.Term;
       function Parse_Id return String;
 
       ------------------
       -- Parse_Atomic --
       ------------------
 
-      procedure Parse_Atomic is
+      function Parse_Atomic return Skit.Terms.Term is
       begin
          if Ch = '(' then
             Skip;
-            Parse_Expression;
-            if Ch = ')' then
-               Skip;
-            else
-               raise Parse_Error with
-                 "Position" & Index'Image & ": expected ')'";
-            end if;
+            return E : constant Skit.Terms.Term := Parse_Expression do
+               if Ch = ')' then
+                  Skip;
+               else
+                  raise Parse_Error with
+                    "Position" & Index'Image & ": expected ')'";
+               end if;
+            end return;
          elsif Ch = '\' then
             Skip;
             declare
@@ -65,17 +64,37 @@ package body Skit.Parser is
                if Ch = '.' then
                   Skip;
                end if;
-               Machine.Push (Skit.Lambda);
-               Machine.Push (To_Object (X));
-               Parse_Expression;
-               Machine.Apply;
-               Machine.Apply;
+               declare
+                  E : constant Skit.Terms.Term := Parse_Expression;
+               begin
+                  return Skit.Terms.Lambda (X, E);
+               end;
             end;
          else
             declare
                Id : constant String := Parse_Id;
             begin
-               Machine.Push (To_Object (Id));
+               if (for all Ch of Id => Ch in '0' .. '9') then
+                  return Skit.Terms.Const (Natural'Value (Id));
+               elsif Id = "I" then
+                  return Skit.Terms.Combinator (Skit.I);
+               elsif Id = "S" then
+                  return Skit.Terms.Combinator (Skit.S);
+               elsif Id = "K" then
+                  return Skit.Terms.Combinator (Skit.K);
+               elsif Id = "B" then
+                  return Skit.Terms.Combinator (Skit.B);
+               elsif Id = "C" then
+                  return Skit.Terms.Combinator (Skit.C);
+               elsif Id = "B*" then
+                  return Skit.Terms.Combinator (Skit.B_Star);
+               elsif Id = "C'" then
+                  return Skit.Terms.Combinator (Skit.C_Prime);
+               elsif Id = "seq" then
+                  return Skit.Terms.Combinator (Skit.Sequence);
+               else
+                  return Skit.Terms.Symbol (Id);
+               end if;
             end;
          end if;
       end Parse_Atomic;
@@ -84,21 +103,24 @@ package body Skit.Parser is
       -- Parse_Expression --
       ----------------------
 
-      procedure Parse_Expression is
+      function Parse_Expression return Skit.Terms.Term is
       begin
          Skip_Spaces;
          if At_End then
-            return;
+                  raise Parse_Error with
+                    "Position" & Index'Image & ": expected expression";
          end if;
 
-         Parse_Atomic;
-
-         Skip_Spaces;
-         while At_Expression loop
-            Parse_Atomic;
-            Machine.Apply;
+         declare
+            E : Skit.Terms.Term := Parse_Atomic;
+         begin
             Skip_Spaces;
-         end loop;
+            while At_Expression loop
+               E := Skit.Terms.Apply (E, Parse_Atomic);
+               Skip_Spaces;
+            end loop;
+            return E;
+         end;
       end Parse_Expression;
 
       --------------
@@ -148,13 +170,14 @@ package body Skit.Parser is
          Skip;
          declare
             Name : constant String := Parse_Id;
+            E    : constant Skit.Terms.Term := Parse_Expression;
+            C    : constant Skit.Terms.Term := Skit.Compiler.Compile (E);
          begin
-            Parse_Expression;
-            Skit.Compiler.Compile (Machine);
-            Bind_Value (Name);
+            Bind_Value (Name, C);
+            return Skit.Terms.Primitive (Skit.Nil);
          end;
       else
-         Parse_Expression;
+         return Parse_Expression;
       end if;
    end Parse;
 

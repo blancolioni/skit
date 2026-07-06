@@ -1,4 +1,5 @@
 with Ada.Command_Line;
+with Ada.Containers.Doubly_Linked_Lists;
 with Ada.Text_IO;
 
 with Skit.Compiler;
@@ -16,9 +17,84 @@ package body Skit.Tests is
 
    Total, Pass, Fail : Natural := 0;
 
+   type Null_Resolver is new Skit.Terms.Resolver_Interface with null record;
+
+   overriding function Resolve
+     (This : Null_Resolver;
+      Name : String)
+      return Skit.Object
+   is (raise Constraint_Error with "undefined: " & Name);
+
+   Local_Resolver : aliased Null_Resolver;
+
    procedure Put
      (S   : String;
       Max : Natural);
+
+   function Load (Ops : Stack_Operation_Array) return Skit.Terms.Term;
+
+   ----------
+   -- Load --
+   ----------
+
+   function Load (Ops : Stack_Operation_Array) return Skit.Terms.Term is
+
+      package Term_Lists is
+        new Ada.Containers.Doubly_Linked_Lists
+          (Skit.Terms.Term, Skit.Terms."=");
+
+      Stack : Term_Lists.List;
+
+      function Pop return Skit.Terms.Term;
+      procedure Push (X : Skit.Terms.Term);
+
+      ---------
+      -- Pop --
+      ---------
+
+      function Pop return Skit.Terms.Term is
+      begin
+         return T : constant Skit.Terms.Term := Stack.Last_Element do
+            Stack.Delete_Last;
+         end return;
+      end Pop;
+
+      ----------
+      -- Push --
+      ----------
+
+      procedure Push (X : Skit.Terms.Term) is
+      begin
+         Stack.Append (X);
+      end Push;
+
+   begin
+      for Item of Ops loop
+         case Item.Op is
+            when Push =>
+               Push (Item.X);
+            when Apply =>
+               declare
+                  Right : constant Skit.Terms.Term := Pop;
+                  Left  : constant Skit.Terms.Term := Pop;
+               begin
+                  Push (Skit.Terms.Apply (Left, Right));
+               end;
+            when Lambda =>
+               declare
+                  Lambda_Body : constant Skit.Terms.Term := Pop;
+                  Lambda_Var  : constant Skit.Terms.Term := Pop;
+               begin
+                  Push
+                    (Skit.Terms.Lambda
+                       (Skit.Terms.Get_Symbol (Lambda_Var),
+                        Lambda_Body));
+               end;
+         end case;
+      end loop;
+
+      return Pop;
+   end Load;
 
    ---------
    -- Put --
@@ -52,10 +128,20 @@ package body Skit.Tests is
 
    procedure Initialize is
    begin
-      Machine := Skit.Impl.Machine (16 * 1024);
+      Machine := Skit.Impl.Machine (256 * 1024);
       Env     := Skit.Environment.Create (Machine);
       Skit.Library.Load_Standard_Library (Env);
    end Initialize;
+
+   ----------
+   -- Prim --
+   ----------
+
+   function Prim (P : Natural) return Stack_Operation_Type is
+   begin
+      return Push
+        (Object'(Object_Payload (P + 64), Primitive_Object));
+   end Prim;
 
    ------------
    -- Report --
@@ -88,18 +174,16 @@ package body Skit.Tests is
    begin
       Total := @ + 1;
 
-      for Element of Operations loop
-         case Element.Op is
-            when Apply =>
-               Machine.Apply;
-            when Push =>
-               Machine.Push (Element.X);
-         end case;
-      end loop;
+      declare
+         Term : Skit.Terms.Term := Load (Operations);
+      begin
+         if Compile then
+            Term := Skit.Compiler.Compile (Term);
+         end if;
 
-      if Compile then
-         Skit.Compiler.Compile (Machine);
-      end if;
+         Machine.Push
+           (Skit.Terms.Install (Term, Local_Resolver'Access, Machine));
+      end;
 
       Machine.Evaluate;
 
@@ -189,5 +273,14 @@ package body Skit.Tests is
    begin
       Test (Name, Operations, Expected, True);
    end Test_Compiler;
+
+   ---------
+   -- Var --
+   ---------
+
+   function Var (V : String) return Stack_Operation_Type is
+   begin
+      return Push (Skit.Terms.Symbol (V));
+   end Var;
 
 end Skit.Tests;
