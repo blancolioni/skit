@@ -131,6 +131,19 @@ references resolve through `Skit.Environment.Lookup` — the same resolution ADR
 0002 uses for named imports — which is why this decision builds the loader
 boundary that ADR depends on.
 
+#### Invariant: no collection during Install
+
+Install holds its partially-built subgraphs in Ada call-stack locals (the
+`Object` values returned up the recursion), not in machine roots. A collection
+firing mid-Install would not see those intermediates and would reclaim them out
+from under the build. Rather than root every pending intermediate, Install
+relies on an invariant: **a collection runs once before Install, and Install
+allocates monotonically into free space without triggering another.** If the
+final graph does not fit in the free space left after that collection, the
+program does not fit the core at all — a hard core-exhaustion error, which is the
+same outcome any over-large program produces. `Build_Apply` is therefore a raw
+bump-allocate with no collection path, and the rooting problem does not arise.
+
 ### What the machine sheds
 
 - `Skit.Compiler`'s on-machine implementation — deleted; the logic is re-homed
