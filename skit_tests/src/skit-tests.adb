@@ -413,3 +413,6 @@ package body Skit.Tests is
    function Var (V : String) return Stack_Operation_Type is
    begin
       return Push (Skit.Terms.Symbol (V));
+   end Var;
+
+end Skit.Tests;
