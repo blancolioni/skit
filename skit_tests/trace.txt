@@ -1,0 +1,77 @@
+eval: <64> 0 0
+push: 0
+push: 0
+stop: <64>
+stop: 0
+suspension: <64> (<64> 0)
+stop: 0
+suspension: <64>
+calling with args:,0,0
+stop: 1
+collecting result
+result: 1
+#eq 0 0                                PASS
+eval: <66> 1 3 2
+push: 2
+push: 3
+push: 1
+stop: <66>
+stop: 2
+suspension: <66> (<66> 1) (<66> 1 3)
+stop: 3
+suspension: <66> (<66> 1)
+stop: 1
+suspension: <66>
+calling with args:,1,3,2
+stop: 2
+collecting result
+result: 2
+#choose 1 3 2                          PASS
+eval: C' C (C' (C' <66>) <64> (K I)) K 0 0 2 3
+push: 3
+push: 2
+push: 0
+push: 0
+push: K
+push: C' (C' <66>) <64> (K I)
+push: C
+stop: C'
+push: K
+push: C' (C' <66>) <64> (K I) 0
+stop: C
+push: K
+push: 0
+push: 0
+push: K I
+push: <64>
+push: C' <66>
+stop: C'
+push: K I
+push: <64> 0
+push: <66>
+stop: C'
+push: K I
+push: <64> 0 0
+stop: <66>
+stop: K
+stop: 2
+suspension: <66> (<66> (<64> 0 0)) (<66> (<64> 0 0) (K I))
+push: I
+stop: K
+suspension: <66> (<66> (<64> 0 0))
+push: 0
+push: 0
+stop: <64>
+stop: 0
+suspension: <64> (<64> 0)
+stop: 0
+suspension: <64>
+calling with args:,0,0
+stop: 1
+suspension: <66>
+calling with args:,1,2,2
+stop: 2
+collecting result
+apply: I
+result: 2 I
+eq 0 0 2 3                             expected: 2; found: 2 I

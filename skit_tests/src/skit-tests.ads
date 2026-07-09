@@ -1,4 +1,5 @@
 with Skit.Terms;
+
 package Skit.Tests is
 
    type Stack_Operation_Type is private;
@@ -27,11 +28,6 @@ package Skit.Tests is
       Operations : Stack_Operation_Array;
       Expected   : Object);
 
-   procedure Test_Compiler
-     (Name       : String;
-      Operations : Stack_Operation_Array;
-      Expected   : Object);
-
    procedure Test
      (Source   : String;
       Expected : Object);
@@ -39,6 +35,10 @@ package Skit.Tests is
    procedure Test
      (Source   : String;
       Expected : Integer);
+
+   procedure Test
+     (Source   : String;
+      Expected : String);
 
    procedure Report;
 

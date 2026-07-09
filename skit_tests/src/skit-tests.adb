@@ -1,37 +1,147 @@
 with Ada.Command_Line;
 with Ada.Containers.Doubly_Linked_Lists;
+with Ada.Wide_Wide_Text_IO;
 with Ada.Text_IO;
 
 with Skit.Compiler;
-with Skit.Debug;
-with Skit.Environment;
-with Skit.Impl;
-with Skit.Library;
-with Skit.Machine;
-with Skit.Stacks;
+with Skit.Handles;
+with Skit.Parser;
 
 package body Skit.Tests is
 
-   Machine : Skit.Machine.Reference;
-   Env     : Skit.Environment.Reference;
+   Handle : Skit.Handles.Handle;
 
    Total, Pass, Fail : Natural := 0;
 
-   type Null_Resolver is new Skit.Terms.Resolver_Interface with null record;
+   procedure Bind (Name : String; Term : Skit.Terms.Term);
 
-   overriding function Resolve
-     (This : Null_Resolver;
-      Name : String)
-      return Skit.Object
-   is (raise Constraint_Error with "undefined: " & Name);
-
-   Local_Resolver : aliased Null_Resolver;
+   function Resolve
+     (Name : String)
+      return Skit.Object;
 
    procedure Put
      (S   : String;
       Max : Natural);
 
    function Load (Ops : Stack_Operation_Array) return Skit.Terms.Term;
+
+   function Evaluate_Add (Arguments : Object_Array) return Object
+   is (To_Object (To_Integer (Arguments (1)) + To_Integer (Arguments (2))));
+
+   function Evaluate_Sub (Arguments : Object_Array) return Object
+   is (To_Object (To_Integer (Arguments (1)) - To_Integer (Arguments (2))));
+
+   function Evaluate_Mul (Arguments : Object_Array) return Object
+   is (To_Object (To_Integer (Arguments (1)) * To_Integer (Arguments (2))));
+
+   function Evaluate_Div (Arguments : Object_Array) return Object
+   is (To_Object (To_Integer (Arguments (1)) / To_Integer (Arguments (2))));
+
+   function Evaluate_Mod (Arguments : Object_Array) return Object
+   is (To_Object (To_Integer (Arguments (1)) mod To_Integer (Arguments (2))));
+
+   function Evaluate_Eq (Arguments : Object_Array) return Object
+   is (To_Object
+       (if Arguments (1) = Arguments (2)
+          then 1 else 0));
+
+   function Evaluate_Choose (Arguments : Object_Array) return Object
+   is (if Arguments (1) = To_Object (0)
+       then Arguments (2)
+       else Arguments (3));
+
+   function Evaluate_Seq (Arguments : Object_Array) return Object
+   is (Arguments (2));
+
+   function Evaluate_Leq (Arguments : Object_Array) return Object
+   is (To_Object
+       (if To_Integer (Arguments (1)) <= To_Integer (Arguments (2))
+          then 1 else 0));
+
+   function Evaluate_Putchar (Arguments : Object_Array) return Object;
+
+   function Evaluate_Trace (Arguments : Object_Array) return Object;
+
+   ----------
+   -- Bind --
+   ----------
+
+   procedure Bind (Name : String; Term : Skit.Terms.Term) is
+   begin
+      Skit.Handles.Bind
+        (Handle, Name,
+         Skit.Handles.Install
+           (Handle, Skit.Compiler.Compile (Term),
+            Resolve'Access));
+   end Bind;
+
+   ----------------------
+   -- Evaluate_Putchar --
+   ----------------------
+
+   function Evaluate_Putchar (Arguments : Object_Array) return Object is
+   begin
+      Ada.Wide_Wide_Text_IO.Put
+        (Wide_Wide_Character'Val (To_Integer (Arguments (3))));
+      return To_Object (To_Integer (Arguments (1)) + 1);
+   end Evaluate_Putchar;
+
+   --------------------
+   -- Evaluate_Trace --
+   --------------------
+
+   function Evaluate_Trace (Arguments : Object_Array) return Object is
+   begin
+      Ada.Text_IO.Put_Line ("trace: " & Handle.Image (Arguments (1)));
+      return Arguments (1);
+   end Evaluate_Trace;
+
+   ----------------
+   -- Initialize --
+   ----------------
+
+   procedure Initialize is
+      use all type Skit.Handles.Argument_Mode;
+   begin
+      Handle :=
+        Skit.Handles.New_Handle
+          (Writer => Ada.Text_IO.Put'Access);
+      Handle.Bind ("#eq", Handle.Primitive (2, Evaluate_Eq'Access));
+      Handle.Bind ("#leq", Handle.Primitive (2, Evaluate_Leq'Access));
+      Handle.Bind ("#choose",
+                   Handle.Primitive
+                     ([Strict, Lazy, Lazy],
+                      Evaluate_Choose'Access));
+      Handle.Bind ("#seq",
+                   Handle.Primitive
+                     ([Strict, Lazy],
+                      Evaluate_Seq'Access));
+      Handle.Bind ("#add", Handle.Primitive (2, Evaluate_Add'Access));
+      Handle.Bind ("#sub", Handle.Primitive (2, Evaluate_Sub'Access));
+      Handle.Bind ("#mul", Handle.Primitive (2, Evaluate_Mul'Access));
+      Handle.Bind ("#div", Handle.Primitive (2, Evaluate_Div'Access));
+      Handle.Bind ("#mod", Handle.Primitive (2, Evaluate_Mod'Access));
+      Handle.Bind ("#putchar", Handle.Primitive (3, Evaluate_Putchar'Access));
+      Handle.Bind ("#trace", Handle.Primitive (1, Evaluate_Trace'Access));
+      Handle.Bind ("#maxInt", To_Object (Max_Integer));
+      Handle.Bind ("#minInt", To_Object (Min_Integer));
+
+      declare
+         use Ada.Text_IO;
+         File : File_Type;
+      begin
+         Open (File, In_File, "testlib.skit");
+         while not End_Of_File (File) loop
+            declare
+               Expr : constant String := Get_Line (File);
+               Unused : constant Skit.Terms.Term :=
+                          Skit.Parser.Parse (Expr, Bind'Access);
+            begin
+               pragma Unreferenced (Unused);
+            end;
+         end loop;
+      end;
+   end Initialize;
 
    ----------
    -- Load --
@@ -113,27 +223,6 @@ package body Skit.Tests is
    end Put;
 
    ----------
-   -- Test --
-   ----------
-
-   procedure Test
-     (Name       : String;
-      Operations : Stack_Operation_Array;
-      Expected   : Object;
-      Compile    : Boolean);
-
-   ----------------
-   -- Initialize --
-   ----------------
-
-   procedure Initialize is
-   begin
-      Machine := Skit.Impl.Machine (256 * 1024);
-      Env     := Skit.Environment.Create (Machine);
-      Skit.Library.Load_Standard_Library (Env);
-   end Initialize;
-
-   ----------
    -- Prim --
    ----------
 
@@ -151,59 +240,33 @@ package body Skit.Tests is
    begin
       Ada.Text_IO.Put_Line
         ("Total tests" & Total'Image
-        & "; passed: "
-        & Pass'Image
-        & "; failed: "
-        & Fail'Image);
+         & "; passed: "
+         & Pass'Image
+         & "; failed: "
+         & Fail'Image);
 
-      Machine.Report;
+      Handle.Report;
       Ada.Command_Line.Set_Exit_Status
         (Ada.Command_Line.Exit_Status (Fail));
    end Report;
 
-   ----------
-   -- Test --
-   ----------
+   -------------
+   -- Resolve --
+   -------------
 
-   procedure Test
-     (Name       : String;
-      Operations : Stack_Operation_Array;
-      Expected   : Object;
-      Compile    : Boolean)
+   function Resolve
+     (Name : String)
+      return Skit.Object
    is
+      Value : constant Object := Handle.Lookup (Name);
    begin
-      Total := @ + 1;
-
-      declare
-         Term : Skit.Terms.Term := Load (Operations);
-      begin
-         if Compile then
-            Term := Skit.Compiler.Compile (Term);
-         end if;
-
-         Machine.Push
-           (Skit.Terms.Install (Term, Local_Resolver'Access, Machine));
-      end;
-
-      Machine.Evaluate;
-
-      declare
-         Result : constant Skit.Object := Machine.Pop;
-      begin
-         Put (Name, 38);
-
-         if Result = Expected then
-            Pass := @ + 1;
-            Ada.Text_IO.Put_Line ("PASS");
-         else
-            Fail := @ + 1;
-            Ada.Text_IO.Put_Line
-              ("expected: " & Skit.Debug.Image (Expected)
-               & "; found " & Skit.Debug.Image (Result, Machine));
-         end if;
-      end;
-
-   end Test;
+      if Value = Undefined then
+         raise Constraint_Error with
+           "undefined: " & Name;
+      else
+         return Value;
+      end if;
+   end Resolve;
 
    ----------
    -- Test --
@@ -215,7 +278,35 @@ package body Skit.Tests is
       Expected   : Object)
    is
    begin
-      Test (Name, Operations, Expected, False);
+      Total := @ + 1;
+
+      declare
+         Term : Skit.Terms.Term := Load (Operations);
+      begin
+         Term := Skit.Compiler.Compile (Term);
+         Handle.Install (Term, Resolve'Access);
+      end;
+
+      Handle.Evaluate;
+
+      declare
+         Result : constant Skit.Object := Handle.Pop;
+      begin
+         Put (Name, 38);
+
+         if Result = Expected then
+            Pass := @ + 1;
+            Ada.Text_IO.Put_Line ("PASS");
+         else
+            Fail := @ + 1;
+            Ada.Text_IO.Put ("expected: ");
+            Handle.Write (Expected);
+            Ada.Text_IO.Put ("; found: ");
+            Handle.Write (Result);
+            Ada.Text_IO.New_Line;
+         end if;
+      end;
+
    end Test;
 
    ----------
@@ -226,12 +317,18 @@ package body Skit.Tests is
      (Source   : String;
       Expected : Object)
    is
+      Term : Skit.Terms.Term :=
+               Skit.Parser.Parse (Source, Bind'Access);
    begin
       Total := @ + 1;
-      Env.Evaluate (Source);
+
+      Term := Skit.Compiler.Compile (Term);
+      Handle.Install (Term, Resolve'Access);
+
+      Handle.Evaluate;
 
       declare
-         Result : constant Skit.Object := Machine.Pop;
+         Result : constant Skit.Object := Handle.Pop;
       begin
          Put (Source, 38);
          Ada.Text_IO.Set_Col (40);
@@ -240,13 +337,20 @@ package body Skit.Tests is
             Ada.Text_IO.Put_Line ("PASS");
             Pass := @ + 1;
          else
-            Ada.Text_IO.Put_Line
-              ("expected: " & Skit.Debug.Image (Expected)
-               & "; found " & Skit.Debug.Image (Result, Machine));
+            Fail := @ + 1;
+            Ada.Text_IO.Put ("expected: ");
+            Handle.Write (Expected);
+            Ada.Text_IO.Put ("; found: ");
+            Handle.Write (Result);
+            Ada.Text_IO.New_Line;
             Fail := @ + 1;
          end if;
       end;
-
+   exception
+      when others =>
+         Ada.Text_IO.Put_Line
+           ("error evaluting " & Skit.Terms.Image (Term));
+         raise;
    end Test;
 
    ----------
@@ -261,18 +365,46 @@ package body Skit.Tests is
       Test (Source, Skit.To_Object (Expected));
    end Test;
 
-   -------------------
-   -- Test_Compiler --
-   -------------------
+   ----------
+   -- Test --
+   ----------
 
-   procedure Test_Compiler
-     (Name       : String;
-      Operations : Stack_Operation_Array;
-      Expected   : Object)
+   procedure Test
+     (Source   : String;
+      Expected : String)
    is
+      Term : Skit.Terms.Term :=
+               Skit.Parser.Parse (Source, Bind'Access);
    begin
-      Test (Name, Operations, Expected, True);
-   end Test_Compiler;
+      Total := @ + 1;
+
+      Term := Skit.Compiler.Compile (Term);
+      Handle.Install (Term, Resolve'Access);
+
+      Handle.Evaluate;
+
+      declare
+         Result : constant String :=
+                    Handle.Image (Handle.Pop);
+      begin
+         Put (Source, 38);
+         Ada.Text_IO.Set_Col (40);
+
+         if Result = Expected then
+            Ada.Text_IO.Put_Line ("PASS");
+            Pass := @ + 1;
+         else
+            Fail := @ + 1;
+            Ada.Text_IO.Put ("expected: ");
+            Ada.Text_IO.Put (Expected);
+            Ada.Text_IO.Put ("; found: ");
+            Ada.Text_IO.Put (Result);
+            Ada.Text_IO.New_Line;
+            Fail := @ + 1;
+         end if;
+      end;
+
+   end Test;
 
    ---------
    -- Var --
@@ -281,6 +413,3 @@ package body Skit.Tests is
    function Var (V : String) return Stack_Operation_Type is
    begin
       return Push (Skit.Terms.Symbol (V));
-   end Var;
-
-end Skit.Tests;

@@ -45,15 +45,17 @@ package body Skit.Compiler is
       return Skit.Terms.Term
    is
       use Skit.Terms;
+      Result : constant Skit.Terms.Term :=
+                 (if Is_Lambda (E)
+                  then Abstract_Variable
+                    (Get_Variable (E),
+                     Compile (Get_Body (E)))
+                  elsif Is_Application (E)
+                  then Apply
+                    (Compile (Get_Left (E)), Compile (Get_Right (E)))
+                  else E);
    begin
-      if Is_Lambda (E) then
-         return Abstract_Variable (Get_Variable (E),
-                                   Compile (Get_Body (E)));
-      elsif Is_Application (E) then
-         return Apply (Compile (Get_Left (E)), Compile (Get_Right (E)));
-      else
-         return E;
-      end if;
+      return Result;
    end Compile;
 
    --------------

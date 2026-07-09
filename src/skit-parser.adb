@@ -90,8 +90,6 @@ package body Skit.Parser is
                   return Skit.Terms.Combinator (Skit.B_Star);
                elsif Id = "C'" then
                   return Skit.Terms.Combinator (Skit.C_Prime);
-               elsif Id = "seq" then
-                  return Skit.Terms.Combinator (Skit.Sequence);
                else
                   return Skit.Terms.Symbol (Id);
                end if;

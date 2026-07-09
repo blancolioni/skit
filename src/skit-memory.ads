@@ -1,47 +1,75 @@
-with Skit.Containers;
+private package Skit.Memory is
 
-package Skit.Memory is
-
-   type Abstraction is interface;
-   type Reference is access all Abstraction'Class;
+   type Instance (Last : Cell_Address) is limited private;
 
    function Left
-     (This : Abstraction;
+     (This : Instance;
       App  : Object)
       return Object
-      is abstract
-     with Pre'Class => Is_Application (App);
+     with Inline_Always, Pre => Is_Application (App);
 
    function Right
-     (This : Abstraction;
+     (This : Instance;
       App  : Object)
       return Object
-      is abstract
-     with Pre'Class => Is_Application (App);
+     with Inline_Always, Pre => Is_Application (App);
 
    procedure Set_Left
-     (This : in out Abstraction;
+     (This : in out Instance;
       App  : Object;
       To   : Object)
-   is abstract
-     with Pre'Class => Is_Application (App);
+     with Inline_Always, Pre => Is_Application (App);
 
    procedure Set_Right
-     (This : in out Abstraction;
+     (This : in out Instance;
       App  : Object;
       To   : Object)
-   is abstract
-     with Pre'Class => Is_Application (App);
+     with Inline_Always, Pre => Is_Application (App);
 
-   procedure Add_Container
-     (This      : in out Abstraction;
-      Container : not null access Skit.Containers.Abstraction'Class)
-   is abstract;
+   function Is_Full
+     (This : Instance)
+      return Boolean
+     with Inline_Always;
 
-   procedure Report (This : Abstraction) is abstract;
-   procedure Trace_GC
-     (This : in out Abstraction;
-      Enabled : Boolean)
-   is abstract;
+   function Append
+     (This   : in out Instance;
+      Left   : Object;
+      Right  : Object)
+      return Object
+     with Pre => not Is_Full (This);
+
+   procedure Initialize (This : in out Instance)
+     with Post => not Is_Full (This);
+
+   procedure Before_GC (This : in out Instance);
+   procedure After_GC (This : in out Instance);
+
+   procedure Mark
+     (This : in out Instance;
+      Root : in out Object);
+
+   procedure GC (This : in out Instance);
+
+private
+
+   type Cell_Type is
+      record
+         Left, Right : Object;
+      end record;
+
+   type Cell_Array is array (Cell_Address range <>) of Cell_Type;
+
+   type Instance (Last : Cell_Address) is limited
+      record
+         Core              : Cell_Array (0 .. Last);
+         Top               : Cell_Address;
+         Free              : Cell_Address;
+         From_Space        : Cell_Address;
+         To_Space          : Cell_Address;
+         Space_Size        : Cell_Address;
+         Scan              : Cell_Address;
+         Alloc_Count       : Natural := 0;
+         Reclaimed         : Natural := 0;
+      end record;
 
 end Skit.Memory;

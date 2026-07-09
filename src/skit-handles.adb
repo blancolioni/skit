@@ -1,0 +1,228 @@
+with Skit.Machines.Report;
+
+package body Skit.Handles is
+
+   function To_Symbol_Object
+     (This : Handle'Class;
+      Name : String)
+      return Object;
+
+   ---------------
+   -- Primitive --
+   ---------------
+
+   function Primitive
+     (This           : Handle'Class;
+      Argument_Modes : Argument_Mode_Array;
+      Evaluator      : Primitive_Evaluator)
+      return Object
+   is
+   begin
+      return This.H.Machine.Primitive
+        ([for Mode of Argument_Modes => Mode = Lazy],
+         Evaluator);
+   end Primitive;
+
+   ---------------
+   -- Primitive --
+   ---------------
+
+   function Primitive
+     (This           : Handle'Class;
+      Argument_Count : Natural;
+      Evaluator      : Primitive_Evaluator)
+      return Object
+   is
+      Lazy : constant Skit.Machines.Lazy_Argument_Array (1 .. Argument_Count)
+        := [others => False];
+   begin
+      return This.H.Machine.Primitive (Lazy, Evaluator);
+   end Primitive;
+
+   ----------
+   -- Bind --
+   ----------
+
+   procedure Bind
+     (This  : Handle'Class;
+      Name  : String;
+      Value : Object)
+   is
+   begin
+      This.H.Machine.Bind (This.To_Symbol_Object (Name), Value);
+   end Bind;
+
+   --------------
+   -- Evaluate --
+   --------------
+
+   procedure Evaluate
+     (This : Handle'Class)
+   is
+   begin
+      This.H.Machine.Evaluate;
+   end Evaluate;
+
+   -----------
+   -- Image --
+   -----------
+
+   function Image
+     (This : Handle'Class;
+      Expr : Object)
+      return String
+   is
+   begin
+      return This.H.Machine.Debug_Image (Expr);
+   end Image;
+
+   -------------
+   -- Install --
+   -------------
+
+   procedure Install
+     (This     : Handle'Class;
+      Top_Term : Skit.Terms.Term;
+      Resolve  : not null access
+        function (Name : String) return Object)
+   is
+   begin
+      This.H.Machine.Push (This.Install (Top_Term, Resolve));
+   end Install;
+
+   -------------
+   -- Install --
+   -------------
+
+   function Install
+     (This     : Handle'Class;
+      Top_Term : Skit.Terms.Term;
+      Resolve  : not null access
+        function (Name : String) return Object)
+      return Object
+   is
+
+      use Skit.Terms;
+
+      function Install (T : Term) return Object;
+
+      -------------
+      -- Install --
+      -------------
+
+      function Install (T : Term) return Object is
+      begin
+         if Is_Application (T) then
+            return This.H.Machine.Append
+              (Install (Get_Left (T)),
+               Install (Get_Right (T)));
+         elsif Is_Symbol (T) then
+            return Resolve (Get_Symbol (T));
+         elsif Is_Atom (T) then
+            return Get_Atom (T);
+         else
+            raise Constraint_Error with
+              "cannot install term: " & Image (T);
+         end if;
+      end Install;
+
+   begin
+      return Install (Top_Term);
+   end Install;
+
+   ------------
+   -- Lookup --
+   ------------
+
+   function Lookup
+     (This : Handle'Class;
+      Name : String)
+      return Object
+   is
+   begin
+      return This.H.Machine.Lookup
+        (This.To_Symbol_Object (Name));
+   end Lookup;
+
+   ----------------
+   -- New_Handle --
+   ----------------
+
+   function New_Handle
+     (Core_Size : Natural := 256 * 1024;
+      Writer    : Write_Handler := null)
+      return Handle
+   is
+      H : constant Handle_Access :=
+            new Handle_Record (Cell_Address (Core_Size - 1));
+   begin
+      H.Writer := Writer;
+      H.Machine.Initialize;
+      return (H => H);
+   end New_Handle;
+
+   ---------
+   -- Pop --
+   ---------
+
+   function Pop
+     (This : Handle'Class)
+      return Object
+   is
+   begin
+      return This.H.Machine.Pop;
+   end Pop;
+
+   ------------
+   -- Report --
+   ------------
+
+   procedure Report (This : Handle'Class) is
+   begin
+      Skit.Machines.Report (This.H.Machine);
+   end Report;
+
+   ----------------------
+   -- To_Symbol_Object --
+   ----------------------
+
+   function To_Symbol_Object
+     (This : Handle'Class;
+      Name : String)
+      return Object
+   is
+      use Symbol_Maps;
+      Position : constant Cursor := This.H.Map.Find (Name);
+   begin
+      if Has_Element (Position) then
+         return Element (Position);
+      else
+         This.H.Vector.Append (Name);
+         return Symbol : constant Object :=
+           (Object_Payload (This.H.Vector.Last_Index)
+            + Primitive_Variable_Payload'First,
+            Primitive_Object)
+         do
+            This.H.Map.Insert (Name, Symbol);
+         end return;
+      end if;
+   end To_Symbol_Object;
+
+   -----------
+   -- Write --
+   -----------
+
+   procedure Write
+     (This : Handle'Class;
+      Expr : Object)
+   is
+      S : constant String := This.Image (Expr);
+   begin
+      if This.H.Writer /= null then
+         for Ch of S loop
+            This.H.Writer (Ch);
+         end loop;
+      end if;
+   end Write;
+
+end Skit.Handles;

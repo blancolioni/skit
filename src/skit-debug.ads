@@ -1,12 +1,12 @@
 with Skit.Memory;
 
-package Skit.Debug is
+private package Skit.Debug is
 
    function Image (X : Object) return String;
 
    function Image
      (X : Object;
-      Core : not null access constant Skit.Memory.Abstraction'Class)
+      Core : Skit.Memory.Instance)
       return String;
 
 end Skit.Debug;

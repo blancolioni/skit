@@ -1,6 +1,5 @@
-with Skit.Builder;
-with System.Storage_Elements;
-with System.Storage_Pools;
+private with System.Storage_Elements;
+private with System.Storage_Pools;
 
 package Skit.Terms is
 
@@ -17,6 +16,7 @@ package Skit.Terms is
    function Is_Application (T : Term) return Boolean;
    function Is_Lambda (T : Term) return Boolean;
    function Is_Symbol (T : Term) return Boolean;
+   function Is_Atom (T : Term) return Boolean;
 
    function Is_Combinator (T : Term; C : Object) return Boolean;
 
@@ -35,27 +35,10 @@ package Skit.Terms is
    function Get_Symbol (T : Term) return String
      with Pre => Is_Symbol (T);
 
+   function Get_Atom (T : Term) return Object
+     with Pre => Is_Atom (T);
+
    procedure Reset;
-
-   type Resolver_Interface is interface;
-
-   function Resolve
-     (This : Resolver_Interface;
-      Name : String)
-      return Object
-      is abstract;
-
-   function Install
-     (Top_Term : Term;
-      Resolver : not null access constant Resolver_Interface'Class;
-      Builder  : not null access Skit.Builder.Abstraction'Class)
-      return Object;
-   --  Build Top_Term into the machine using raw allocation; no GC can
-   --  run, because intermediate objects are held on the Ada call stack
-   --  and are invisible to the collector.  Call only on an empty
-   --  machine, immediately after a GC, or on a machine whose only
-   --  prior operations are other calls to Install.  Running out of
-   --  memory here means the machine is too small for the term.
 
    function Image (T : Term) return String;
 
@@ -100,6 +83,8 @@ private
 
    type Term_Class is (Apply, Lambda,
                        Const_Integer, Const_Float, Primitive, Symbol);
+
+   subtype Atom_Class is Term_Class range Const_Integer .. Primitive;
 
    type Term_Record (Class : Term_Class; Length : Natural) is
       record
@@ -150,6 +135,9 @@ private
    function Is_Symbol (T : Term) return Boolean
    is (T.Class = Symbol);
 
+   function Is_Atom (T : Term) return Boolean
+   is (T.Class in Const_Integer | Const_Float | Primitive);
+
    function Is_Combinator (T : Term; C : Object) return Boolean
    is (T.Class = Primitive and then T.Primitive_Value = C);
 
@@ -167,5 +155,11 @@ private
 
    function Get_Symbol (T : Term) return String
    is (T.Symbol_Name);
+
+   function Get_Atom (T : Term) return Object
+   is (case Atom_Class (T.Class) is
+          when Const_Integer => To_Object (T.Integer_Value),
+          when Const_Float   => To_Object (T.Float_Value),
+          when Primitive     => T.Primitive_Value);
 
 end Skit.Terms;
