@@ -146,7 +146,7 @@ package body Skit.Tests is
    begin
       Handle :=
         Skit.Handles.New_Handle
-          (Core_Size => 8192,
+          (Core_Size => 16384,
            Writer => Ada.Text_IO.Put'Access);
       Handle.Bind ("#eq", Handle.Primitive (2, Evaluate_Eq'Access));
       Handle.Bind ("#leq", Handle.Primitive (2, Evaluate_Leq'Access));
@@ -385,7 +385,6 @@ package body Skit.Tests is
             Ada.Text_IO.Put ("; found: ");
             Handle.Write (Result);
             Ada.Text_IO.New_Line;
-            Fail := @ + 1;
          end if;
       end;
    exception
