@@ -47,7 +47,8 @@ private package Skit.Machines is
      with Pre => Is_Symbol (Name);
 
    procedure Evaluate
-     (This : in out Instance'Class);
+     (This      : in out Instance'Class;
+      User_Data : access User_Data_Interface'Class);
 
    function Debug_Image
      (This : Instance'Class;
@@ -71,9 +72,9 @@ private
 
    package Environment_Maps is
      new Ada.Containers.Ordered_Maps
-     (Key_Type     => Object_Payload,
-      Element_Type => Object,
-      "<"          => "<");
+       (Key_Type     => Object_Payload,
+        Element_Type => Object,
+        "<"          => "<");
 
    subtype Register is Positive range 1 .. 15;
 
@@ -82,11 +83,19 @@ private
 
    type Instance (Core_Size : Cell_Address) is tagged limited
       record
-         Internal      : Internal_Register_Array := [others        => Nil];
-         R             : Object_Array (Register) := [others        => Nil];
-         Prims         : Primitive_Function_Vectors.Vector;
-         Environment   : Environment_Maps.Map;
-         Core          : Skit.Memory.Instance (Core_Size);
+         Internal          : Internal_Register_Array := [others => Nil];
+         R                 : Object_Array (Register) := [others => Nil];
+         Prims             : Primitive_Function_Vectors.Vector;
+         Environment       : Environment_Maps.Map;
+         Core              : Skit.Memory.Instance (Core_Size);
+         Alloc_Count       : Natural := 0;
+         Active_Cells      : Natural := 0;
+         Max_Active_Cells  : Natural := 0;
+         Total_Alloc_Count : Natural := 0;
+         Reclaimed         : Natural := 0;
+         GC_Time           : Duration := 0.0;
+         GC_Count          : Natural := 0;
+         Eval_Time         : Duration := 0.0;
       end record;
 
 end Skit.Machines;

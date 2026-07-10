@@ -29,8 +29,12 @@ package Skit is
 
    function To_Variable_Object (Index : Variable_Index) return Object;
 
+   type User_Data_Interface is interface;
+
    type Primitive_Evaluator is access
-     function (Arguments : Object_Array) return Object;
+     function (User_Data : access User_Data_Interface'Class;
+               Arguments : Object_Array)
+               return Object;
 
 private
 
