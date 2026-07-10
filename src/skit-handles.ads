@@ -57,19 +57,9 @@ package Skit.Handles is
       Expr : Object)
       return String;
 
-   type Argument_Mode is (Strict, Lazy);
-   type Argument_Mode_Array is array (Positive range <>) of Argument_Mode;
-
    function Primitive
-     (This           : Handle'Class;
-      Argument_Count : Natural;
-      Evaluator      : Primitive_Evaluator)
-      return Object;
-
-   function Primitive
-     (This           : Handle'Class;
-      Argument_Modes : Argument_Mode_Array;
-      Evaluator      : Primitive_Evaluator)
+     (This      : Handle'Class;
+      Primitive : Primitive_Evaluator_Interface'Class)
       return Object;
 
    procedure Bind

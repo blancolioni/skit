@@ -29,12 +29,31 @@ package Skit is
 
    function To_Variable_Object (Index : Variable_Index) return Object;
 
-   type User_Data_Interface is interface;
+   type User_Data_Interface is limited interface;
 
-   type Primitive_Evaluator is access
-     function (User_Data : access User_Data_Interface'Class;
-               Arguments : Object_Array)
-               return Object;
+   type Argument_Mode is (Strict, Lazy);
+   type Argument_Mode_Array is array (Positive range <>) of Argument_Mode;
+
+   type Primitive_Evaluator_Interface is interface;
+
+   function Argument_Count
+     (This : Primitive_Evaluator_Interface)
+      return Natural
+      is abstract;
+
+   function Argument_Modes
+     (This : Primitive_Evaluator_Interface)
+      return Argument_Mode_Array
+      is abstract
+     with Post'Class => Argument_Modes'Result'Length = This.Argument_Count;
+
+   function Evaluate
+     (This      : Primitive_Evaluator_Interface;
+      User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array)
+      return Object
+      is abstract
+     with Pre'Class => Arguments'Length = This.Argument_Count;
 
 private
 

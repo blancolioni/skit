@@ -1,4 +1,4 @@
-private with Ada.Containers.Vectors;
+private with Ada.Containers.Indefinite_Vectors;
 private with Ada.Containers.Ordered_Maps;
 private with Skit.Memory;
 
@@ -30,9 +30,8 @@ private package Skit.Machines is
    type Lazy_Argument_Array is array (Positive range <>) of Boolean;
 
    function Primitive
-     (This           : in out Instance'Class;
-      Lazy_Argument  : Lazy_Argument_Array;
-      Evaluator      : Primitive_Evaluator)
+     (This      : in out Instance'Class;
+      Primitive : Primitive_Evaluator_Interface'Class)
       return Object;
 
    procedure Bind
@@ -57,18 +56,9 @@ private package Skit.Machines is
 
 private
 
-   Max_Primitive_Arguments : constant := 16;
-
-   type Primitive_Record is
-      record
-         Argument_Count : Natural;
-         Lazy_Argument  : Lazy_Argument_Array (1 .. Max_Primitive_Arguments);
-         Evaluator      : Primitive_Evaluator;
-      end record;
-
    package Primitive_Function_Vectors is
-     new Ada.Containers.Vectors
-       (Natural, Primitive_Record);
+     new Ada.Containers.Indefinite_Vectors
+       (Natural, Primitive_Evaluator_Interface'Class);
 
    package Environment_Maps is
      new Ada.Containers.Ordered_Maps

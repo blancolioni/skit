@@ -12,31 +12,12 @@ package body Skit.Handles is
    ---------------
 
    function Primitive
-     (This           : Handle'Class;
-      Argument_Modes : Argument_Mode_Array;
-      Evaluator      : Primitive_Evaluator)
+     (This      : Handle'Class;
+      Primitive : Primitive_Evaluator_Interface'Class)
       return Object
    is
    begin
-      return This.H.Machine.Primitive
-        ([for Mode of Argument_Modes => Mode = Lazy],
-         Evaluator);
-   end Primitive;
-
-   ---------------
-   -- Primitive --
-   ---------------
-
-   function Primitive
-     (This           : Handle'Class;
-      Argument_Count : Natural;
-      Evaluator      : Primitive_Evaluator)
-      return Object
-   is
-      Lazy : constant Skit.Machines.Lazy_Argument_Array (1 .. Argument_Count)
-        := [others => False];
-   begin
-      return This.H.Machine.Primitive (Lazy, Evaluator);
+      return This.H.Machine.Primitive (Primitive);
    end Primitive;
 
    ----------

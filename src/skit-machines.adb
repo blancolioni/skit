@@ -192,8 +192,7 @@ package body Skit.Machines is
       procedure Advance_Primitive;
 
       procedure Call_Primitive
-        (Argument_Count : Natural;
-         Evaluator      : Primitive_Evaluator);
+        (Evaluator      : Primitive_Evaluator_Interface'Class);
 
       procedure Collect_Result;
 
@@ -205,10 +204,9 @@ package body Skit.Machines is
       --------------------
 
       procedure Call_Primitive
-        (Argument_Count : Natural;
-         Evaluator      : Primitive_Evaluator)
+        (Evaluator      : Primitive_Evaluator_Interface'Class)
       is
-         Arguments : Object_Array (1 .. Argument_Count);
+         Arguments : Object_Array (1 .. Evaluator.Argument_Count);
       begin
          for Arg of Arguments loop
             Arg := This.Pop;
@@ -220,7 +218,7 @@ package body Skit.Machines is
             end loop;
             Ada.Text_IO.New_Line;
          end if;
-         This.Push (Evaluator (User_Data, Arguments));
+         This.Push (Evaluator.Evaluate (User_Data, Arguments));
       end Call_Primitive;
 
       --------------------
@@ -366,10 +364,10 @@ package body Skit.Machines is
          P  : constant Natural :=
                 Natural
                   (F - Primitive_Function_Payload'First);
-         Fn : Primitive_Record renames This.Prims (P);
+         Fn : Primitive_Evaluator_Interface'Class renames This.Prims (P);
       begin
          if Fn.Argument_Count = 0 then
-            Call_Primitive (0, Fn.Evaluator);
+            Call_Primitive (Fn);
             Changed := True;
          else
             --  Build the pending call: the primitive applied to all of its
@@ -446,23 +444,27 @@ package body Skit.Machines is
                                  Natural
                                    (Walk.Payload
                                     - Primitive_Function_Payload'First);
+                     Fn      : Primitive_Evaluator_Interface'Class
+                     renames This.Prims (F_Index);
                   begin
-                     if This.Prims (F_Index).Lazy_Argument (Index) then
-                        --  Lazy: pass the thunk unevaluated, then advance.
-                        --  Push before mutating Frame so Arg stays reachable
-                        --  through Frame across any collection in Push.
-                        This.Push (Arg);
-                        Skit.Memory.Set_Left
-                          (This.Core, Frame, Left (Partial));
-                     else
-                        --  Strict: force the argument.  Push it onto Control
-                        --  (a GC root) first, then advance Frame.
-                        This.Push (Control, Arg);
-                        Skit.Memory.Set_Left
-                          (This.Core, Frame, Left (Partial));
-                        Changed := True;
-                        return;
-                     end if;
+                     case Fn.Argument_Modes (Index) is
+                        when Lazy =>
+                           --  Lazy: pass the thunk unevaluated, then advance.
+                           --  Push before mutating Frame so Arg stays
+                           --  reachable through Frame across any collection
+                           --  in Push.
+                           This.Push (Arg);
+                           Skit.Memory.Set_Left
+                             (This.Core, Frame, Left (Partial));
+                        when Strict =>
+                           --  Strict: force the argument.  Push it onto
+                           --  Control (a GC root) first, then advance Frame.
+                           This.Push (Control, Arg);
+                           Skit.Memory.Set_Left
+                             (This.Core, Frame, Left (Partial));
+                           Changed := True;
+                           return;
+                     end case;
                   end;
                end;
             end;
@@ -474,12 +476,13 @@ package body Skit.Machines is
             P_Index : constant Natural :=
                         Natural (Prim.Payload
                                  - Primitive_Function_Payload'First);
-            Fn      : Primitive_Record renames This.Prims (P_Index);
+            Fn      : Primitive_Evaluator_Interface'Class
+            renames This.Prims (P_Index);
          begin
             It := This.Pop (Secondary_Stack);   --  drop the frame
             --  Leave the redex root parked on the secondary stack across the
             --  call so a collection inside Call_Primitive cannot free it.
-            Call_Primitive (Fn.Argument_Count, Fn.Evaluator);
+            Call_Primitive (Fn);
             declare
                Result : constant Object := This.Pop;
                Root   : constant Object := This.Pop (Secondary_Stack);
@@ -684,20 +687,12 @@ package body Skit.Machines is
    ---------------
 
    function Primitive
-     (This           : in out Instance'Class;
-      Lazy_Argument  : Lazy_Argument_Array;
-      Evaluator      : Primitive_Evaluator)
+     (This      : in out Instance'Class;
+      Primitive : Primitive_Evaluator_Interface'Class)
       return Object
    is
-      Lazy : Lazy_Argument_Array (1 .. Max_Primitive_Arguments) :=
-               [others => False];
    begin
-      Lazy (Lazy_Argument'Range) := Lazy_Argument;
-      This.Prims.Append
-        (Primitive_Record'
-           (Lazy_Argument'Length,
-            Lazy,
-            Evaluator));
+      This.Prims.Append (Primitive);
       return (Object_Payload (This.Prims.Last_Index)
               + Primitive_Function_Payload'First,
               Primitive_Object);

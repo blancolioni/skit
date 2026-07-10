@@ -25,73 +25,78 @@ package body Skit.Tests is
 
    function Load (Ops : Stack_Operation_Array) return Skit.Terms.Term;
 
-   pragma Warnings (Off);
+   type Arithmetic_Function is (Add, Sub, Mul, Divide, Modulus, Leq);
 
-   function Evaluate_Add
-     (User_Data : access User_Data_Interface'Class;
+   type Arithmetic_Evaluator (Fn : Arithmetic_Function) is
+     new Primitive_Evaluator_Interface with
+       record
+         null;
+       end record;
+
+   overriding function Argument_Count
+     (This : Arithmetic_Evaluator)
+      return Natural
+   is (2);
+
+   overriding function Argument_Modes
+     (This : Arithmetic_Evaluator)
+      return Argument_Mode_Array
+   is ([Strict, Strict]);
+
+   overriding function Evaluate
+     (This      : Arithmetic_Evaluator;
+      User_Data : access User_Data_Interface'Class;
       Arguments : Object_Array)
-      return Object
-   is (To_Object (To_Integer (Arguments (1)) + To_Integer (Arguments (2))));
+      return Object;
 
-   function Evaluate_Sub
-     (User_Data : access User_Data_Interface'Class;
-      Arguments : Object_Array) return Object
-   is (To_Object (To_Integer (Arguments (1)) - To_Integer (Arguments (2))));
+   type General_Evaluator_Fn is access
+     function (Arguments : Object_Array) return Object;
 
-   function Evaluate_Mul
-     (User_Data : access User_Data_Interface'Class;
-      Arguments : Object_Array) return Object
-   is (To_Object (To_Integer (Arguments (1)) * To_Integer (Arguments (2))));
+   type Evaluator (Arg_Count : Natural) is
+     new Primitive_Evaluator_Interface with
+      record
+         Modes : Argument_Mode_Array (1 .. Arg_Count);
+         Fn    : General_Evaluator_Fn;
+      end record;
 
-   function Evaluate_Div
-     (User_Data : access User_Data_Interface'Class;
+   overriding function Argument_Count
+     (This : Evaluator)
+      return Natural
+   is (This.Arg_Count);
+
+   overriding function Argument_Modes
+     (This : Evaluator)
+      return Argument_Mode_Array
+   is (This.Modes);
+
+   overriding function Evaluate
+     (This      : Evaluator;
+      User_Data : access User_Data_Interface'Class;
       Arguments : Object_Array)
-      return Object
-   is (To_Object (To_Integer (Arguments (1)) / To_Integer (Arguments (2))));
-
-   function Evaluate_Mod
-     (User_Data : access User_Data_Interface'Class;
-      Arguments : Object_Array)
-      return Object
-   is (To_Object (To_Integer (Arguments (1)) mod To_Integer (Arguments (2))));
+      return Object;
 
    function Evaluate_Eq
-     (User_Data : access User_Data_Interface'Class;
-      Arguments : Object_Array)
+     (Arguments : Object_Array)
       return Object
    is (To_Object
        (if Arguments (1) = Arguments (2)
           then 1 else 0));
 
    function Evaluate_Choose
-     (User_Data : access User_Data_Interface'Class;
-      Arguments : Object_Array) return Object
+     (Arguments : Object_Array) return Object
    is (if Arguments (1) = To_Object (0)
        then Arguments (2)
        else Arguments (3));
 
    function Evaluate_Seq
-     (User_Data : access User_Data_Interface'Class;
-      Arguments : Object_Array) return Object
+     (Arguments : Object_Array) return Object
    is (Arguments (2));
 
-   function Evaluate_Leq
-     (User_Data : access User_Data_Interface'Class;
-      Arguments : Object_Array)
-      return Object
-   is (To_Object
-       (if To_Integer (Arguments (1)) <= To_Integer (Arguments (2))
-          then 1 else 0));
-
-   pragma Warnings (On);
-
    function Evaluate_Putchar
-     (User_Data : access User_Data_Interface'Class;
-      Arguments : Object_Array) return Object;
+     (Arguments : Object_Array) return Object;
 
    function Evaluate_Trace
-     (User_Data : access User_Data_Interface'Class;
-      Arguments : Object_Array) return Object;
+     (Arguments : Object_Array) return Object;
 
    ----------
    -- Bind --
@@ -106,16 +111,52 @@ package body Skit.Tests is
             Resolve'Access));
    end Bind;
 
+   --------------
+   -- Evaluate --
+   --------------
+
+   overriding function Evaluate
+     (This      : Arithmetic_Evaluator;
+      User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array)
+      return Object
+   is
+      X : constant Integer := To_Integer (Arguments (1));
+      Y : constant Integer := To_Integer (Arguments (2));
+      Z : constant Integer :=
+            (case This.Fn is
+                when Add => X + Y,
+                when Sub => X - Y,
+                when Mul => X * Y,
+                when Divide => X / Y,
+                when Modulus => X mod Y,
+                when Leq => (if X <= Y then 1 else 0));
+   begin
+      return To_Object (Z);
+   end Evaluate;
+
+   --------------
+   -- Evaluate --
+   --------------
+
+   overriding function Evaluate
+     (This      : Evaluator;
+      User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array)
+      return Object
+   is
+   begin
+      return This.Fn (Arguments);
+   end Evaluate;
+
    ----------------------
    -- Evaluate_Putchar --
    ----------------------
 
    function Evaluate_Putchar
-     (User_Data : access User_Data_Interface'Class;
-      Arguments : Object_Array)
+     (Arguments : Object_Array)
       return Object
    is
-      pragma Unreferenced (User_Data);
    begin
       Ada.Wide_Wide_Text_IO.Put
         (Wide_Wide_Character'Val (To_Integer (Arguments (3))));
@@ -127,11 +168,9 @@ package body Skit.Tests is
    --------------------
 
    function Evaluate_Trace
-     (User_Data : access User_Data_Interface'Class;
-      Arguments : Object_Array)
+     (Arguments : Object_Array)
       return Object
    is
-      pragma Unreferenced (User_Data);
    begin
       Ada.Text_IO.Put_Line ("trace: " & Handle.Image (Arguments (1)));
       return Arguments (1);
@@ -142,29 +181,53 @@ package body Skit.Tests is
    ----------------
 
    procedure Initialize is
-      use all type Skit.Handles.Argument_Mode;
    begin
       Handle :=
         Skit.Handles.New_Handle
           (Core_Size => 16384,
            Writer => Ada.Text_IO.Put'Access);
-      Handle.Bind ("#eq", Handle.Primitive (2, Evaluate_Eq'Access));
-      Handle.Bind ("#leq", Handle.Primitive (2, Evaluate_Leq'Access));
+      Handle.Bind
+        ("#eq",
+         Handle.Primitive
+           (Evaluator'(2, [Strict, Strict], Evaluate_Eq'Access)));
+
+      Handle.Bind
+        ("#leq", Handle.Primitive (Arithmetic_Evaluator'(Fn => Leq)));
       Handle.Bind ("#choose",
                    Handle.Primitive
-                     ([Strict, Lazy, Lazy],
-                      Evaluate_Choose'Access));
+                     (Evaluator'
+                        (3, [Strict, Lazy, Lazy],
+                         Evaluate_Choose'Access)));
+
       Handle.Bind ("#seq",
                    Handle.Primitive
-                     ([Strict, Lazy],
-                      Evaluate_Seq'Access));
-      Handle.Bind ("#add", Handle.Primitive (2, Evaluate_Add'Access));
-      Handle.Bind ("#sub", Handle.Primitive (2, Evaluate_Sub'Access));
-      Handle.Bind ("#mul", Handle.Primitive (2, Evaluate_Mul'Access));
-      Handle.Bind ("#div", Handle.Primitive (2, Evaluate_Div'Access));
-      Handle.Bind ("#mod", Handle.Primitive (2, Evaluate_Mod'Access));
-      Handle.Bind ("#putchar", Handle.Primitive (3, Evaluate_Putchar'Access));
-      Handle.Bind ("#trace", Handle.Primitive (1, Evaluate_Trace'Access));
+                     (Evaluator'
+                        (2, [Strict, Lazy],
+                         Evaluate_Seq'Access)));
+
+      Handle.Bind ("#add",
+                   Handle.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+      Handle.Bind ("#sub",
+                   Handle.Primitive (Arithmetic_Evaluator'(Fn => Sub)));
+      Handle.Bind ("#mul",
+                   Handle.Primitive (Arithmetic_Evaluator'(Fn => Mul)));
+      Handle.Bind ("#div",
+                   Handle.Primitive (Arithmetic_Evaluator'(Fn => Divide)));
+      Handle.Bind ("#mod",
+                   Handle.Primitive (Arithmetic_Evaluator'(Fn => Modulus)));
+
+      Handle.Bind ("#putchar",
+                   Handle.Primitive
+                     (Evaluator'
+                        (3, [Strict, Strict, Strict],
+                         Evaluate_Putchar'Access)));
+
+      Handle.Bind ("#trace",
+                   Handle.Primitive
+                     (Evaluator'
+                        (1, [Strict],
+                         Evaluate_Trace'Access)));
+
       Handle.Bind ("#maxInt", To_Object (Max_Integer));
       Handle.Bind ("#minInt", To_Object (Min_Integer));
 
