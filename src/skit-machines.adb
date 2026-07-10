@@ -1,3 +1,4 @@
+with Ada.Calendar;
 with Ada.Text_IO;
 with Skit.Debug;
 
@@ -70,6 +71,8 @@ package body Skit.Machines is
       return Object
    is
    begin
+      This.Alloc_Count := @ + 1;
+      This.Total_Alloc_Count := @ + 1;
       if Skit.Memory.Is_Full (This.Core) then
          declare
             Xs : Object_Array := [Left, Right];
@@ -128,6 +131,8 @@ package body Skit.Machines is
      (This      : in out Instance'Class;
       User_Data : access User_Data_Interface'Class)
    is
+      use Ada.Calendar;
+      Start : constant Time := Clock;
       X : constant Object := This.Pop;
    begin
       case X.Tag is
@@ -145,6 +150,7 @@ package body Skit.Machines is
             This.Push (Control, X);
             This.Evaluate_Application (User_Data);
       end case;
+      This.Eval_Time := @ + (Clock - Start);
    end Evaluate;
 
    --------------------------
@@ -585,7 +591,9 @@ package body Skit.Machines is
      (This : in out Instance'Class;
       Xs   : in out Object_Array)
    is
+      use Ada.Calendar;
       use Skit.Memory;
+      Start : constant Time := Clock;
    begin
       if Trace then
          Ada.Text_IO.Put_Line ("GC");
@@ -608,6 +616,8 @@ package body Skit.Machines is
 
       After_GC (This.Core);
 
+      This.GC_Count := @ + 1;
+      This.GC_Time := @ + (Clock - Start);
    end GC;
 
    ----------------

@@ -83,11 +83,19 @@ private
 
    type Instance (Core_Size : Cell_Address) is tagged limited
       record
-         Internal      : Internal_Register_Array := [others        => Nil];
-         R             : Object_Array (Register) := [others        => Nil];
-         Prims         : Primitive_Function_Vectors.Vector;
-         Environment   : Environment_Maps.Map;
-         Core          : Skit.Memory.Instance (Core_Size);
+         Internal          : Internal_Register_Array := [others => Nil];
+         R                 : Object_Array (Register) := [others => Nil];
+         Prims             : Primitive_Function_Vectors.Vector;
+         Environment       : Environment_Maps.Map;
+         Core              : Skit.Memory.Instance (Core_Size);
+         Alloc_Count       : Natural := 0;
+         Active_Cells      : Natural := 0;
+         Max_Active_Cells  : Natural := 0;
+         Total_Alloc_Count : Natural := 0;
+         Reclaimed         : Natural := 0;
+         GC_Time           : Duration := 0.0;
+         GC_Count          : Natural := 0;
+         Eval_Time         : Duration := 0.0;
       end record;
 
 end Skit.Machines;
