@@ -47,7 +47,8 @@ private package Skit.Machines is
      with Pre => Is_Symbol (Name);
 
    procedure Evaluate
-     (This : in out Instance'Class);
+     (This      : in out Instance'Class;
+      User_Data : access User_Data_Interface'Class);
 
    function Debug_Image
      (This : Instance'Class;
@@ -71,9 +72,9 @@ private
 
    package Environment_Maps is
      new Ada.Containers.Ordered_Maps
-     (Key_Type     => Object_Payload,
-      Element_Type => Object,
-      "<"          => "<");
+       (Key_Type     => Object_Payload,
+        Element_Type => Object,
+        "<"          => "<");
 
    subtype Register is Positive range 1 .. 15;
 

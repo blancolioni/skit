@@ -60,7 +60,7 @@ package body Skit.Handles is
      (This : Handle'Class)
    is
    begin
-      This.H.Machine.Evaluate;
+      This.H.Machine.Evaluate (This.H.User_Data);
    end Evaluate;
 
    -----------
@@ -150,7 +150,8 @@ package body Skit.Handles is
 
    function New_Handle
      (Core_Size : Natural := 256 * 1024;
-      Writer    : Write_Handler := null)
+      Writer    : Write_Handler := null;
+      User_Data : access User_Data_Interface'Class := null)
       return Handle
    is
       H : constant Handle_Access :=
@@ -158,6 +159,7 @@ package body Skit.Handles is
    begin
       H.Writer := Writer;
       H.Machine.Initialize;
+      H.User_Data := User_Data_Reference (User_Data);
       return (H => H);
    end New_Handle;
 

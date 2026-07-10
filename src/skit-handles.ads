@@ -13,7 +13,8 @@ package Skit.Handles is
 
    function New_Handle
      (Core_Size : Natural := 256 * 1024;
-      Writer    : Write_Handler := null)
+      Writer    : Write_Handler := null;
+      User_Data : access User_Data_Interface'Class := null)
       return Handle;
 
    procedure Evaluate
@@ -92,12 +93,15 @@ private
    package Symbol_Vectors is
      new Ada.Containers.Indefinite_Vectors (Natural, String);
 
+   type User_Data_Reference is access all User_Data_Interface'Class;
+
    type Handle_Record (Core_Size : Cell_Address) is limited
       record
-         Machine : Skit.Machines.Instance (Core_Size);
-         Writer  : Write_Handler;
-         Map     : Symbol_Maps.Map;
-         Vector  : Symbol_Vectors.Vector;
+         Machine   : Skit.Machines.Instance (Core_Size);
+         Writer    : Write_Handler;
+         Map       : Symbol_Maps.Map;
+         Vector    : Symbol_Vectors.Vector;
+         User_Data : User_Data_Reference;
       end record;
 
    type Handle_Access is access Handle_Record;

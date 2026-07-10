@@ -23,7 +23,8 @@ package body Skit.Machines is
      with Inline_Always;
 
    procedure Evaluate_Application
-     (This  : in out Instance'Class);
+     (This      : in out Instance'Class;
+      User_Data : access User_Data_Interface'Class);
 
    procedure GC (This : in out Instance'Class);
 
@@ -86,7 +87,7 @@ package body Skit.Machines is
       Name  : Object;
       Value : Object)
    is
-      Key : constant Object_Payload := Name.Payload;
+      Key      : constant Object_Payload := Name.Payload;
       Position : constant Environment_Maps.Cursor :=
                    This.Environment.Find (Key);
    begin
@@ -115,7 +116,8 @@ package body Skit.Machines is
    --------------
 
    procedure Evaluate
-     (This : in out Instance'Class)
+     (This      : in out Instance'Class;
+      User_Data : access User_Data_Interface'Class)
    is
       X : constant Object := This.Pop;
    begin
@@ -132,7 +134,7 @@ package body Skit.Machines is
                  ("eval: " & This.Debug_Image (X));
             end if;
             This.Push (Control, X);
-            This.Evaluate_Application;
+            This.Evaluate_Application (User_Data);
       end case;
    end Evaluate;
 
@@ -141,7 +143,8 @@ package body Skit.Machines is
    --------------------------
 
    procedure Evaluate_Application
-     (This  : in out Instance'Class)
+     (This  : in out Instance'Class;
+      User_Data : access User_Data_Interface'Class)
    is
 
       function Is_App (App : Object) return Boolean
@@ -202,7 +205,7 @@ package body Skit.Machines is
             end loop;
             Ada.Text_IO.New_Line;
          end if;
-         This.Push (Evaluator (Arguments));
+         This.Push (Evaluator (User_Data, Arguments));
       end Call_Primitive;
 
       --------------------
@@ -425,8 +428,9 @@ package body Skit.Machines is
 
                   declare
                      F_Index : constant Natural :=
-                       Natural
-                         (Walk.Payload - Primitive_Function_Payload'First);
+                                 Natural
+                                   (Walk.Payload
+                                    - Primitive_Function_Payload'First);
                   begin
                      if This.Prims (F_Index).Lazy_Argument (Index) then
                         --  Lazy: pass the thunk unevaluated, then advance.
@@ -453,7 +457,8 @@ package body Skit.Machines is
          declare
             Prim    : constant Object := Left (Frame);
             P_Index : constant Natural :=
-              Natural (Prim.Payload - Primitive_Function_Payload'First);
+                        Natural (Prim.Payload
+                                 - Primitive_Function_Payload'First);
             Fn      : Primitive_Record renames This.Prims (P_Index);
          begin
             It := This.Pop (Secondary_Stack);   --  drop the frame

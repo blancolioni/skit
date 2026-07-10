@@ -25,42 +25,73 @@ package body Skit.Tests is
 
    function Load (Ops : Stack_Operation_Array) return Skit.Terms.Term;
 
-   function Evaluate_Add (Arguments : Object_Array) return Object
+   pragma Warnings (Off);
+
+   function Evaluate_Add
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array)
+      return Object
    is (To_Object (To_Integer (Arguments (1)) + To_Integer (Arguments (2))));
 
-   function Evaluate_Sub (Arguments : Object_Array) return Object
+   function Evaluate_Sub
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array) return Object
    is (To_Object (To_Integer (Arguments (1)) - To_Integer (Arguments (2))));
 
-   function Evaluate_Mul (Arguments : Object_Array) return Object
+   function Evaluate_Mul
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array) return Object
    is (To_Object (To_Integer (Arguments (1)) * To_Integer (Arguments (2))));
 
-   function Evaluate_Div (Arguments : Object_Array) return Object
+   function Evaluate_Div
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array)
+      return Object
    is (To_Object (To_Integer (Arguments (1)) / To_Integer (Arguments (2))));
 
-   function Evaluate_Mod (Arguments : Object_Array) return Object
+   function Evaluate_Mod
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array)
+      return Object
    is (To_Object (To_Integer (Arguments (1)) mod To_Integer (Arguments (2))));
 
-   function Evaluate_Eq (Arguments : Object_Array) return Object
+   function Evaluate_Eq
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array)
+      return Object
    is (To_Object
        (if Arguments (1) = Arguments (2)
           then 1 else 0));
 
-   function Evaluate_Choose (Arguments : Object_Array) return Object
+   function Evaluate_Choose
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array) return Object
    is (if Arguments (1) = To_Object (0)
        then Arguments (2)
        else Arguments (3));
 
-   function Evaluate_Seq (Arguments : Object_Array) return Object
+   function Evaluate_Seq
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array) return Object
    is (Arguments (2));
 
-   function Evaluate_Leq (Arguments : Object_Array) return Object
+   function Evaluate_Leq
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array)
+      return Object
    is (To_Object
        (if To_Integer (Arguments (1)) <= To_Integer (Arguments (2))
           then 1 else 0));
 
-   function Evaluate_Putchar (Arguments : Object_Array) return Object;
+   pragma Warnings (On);
 
-   function Evaluate_Trace (Arguments : Object_Array) return Object;
+   function Evaluate_Putchar
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array) return Object;
+
+   function Evaluate_Trace
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array) return Object;
 
    ----------
    -- Bind --
@@ -79,7 +110,12 @@ package body Skit.Tests is
    -- Evaluate_Putchar --
    ----------------------
 
-   function Evaluate_Putchar (Arguments : Object_Array) return Object is
+   function Evaluate_Putchar
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array)
+      return Object
+   is
+      pragma Unreferenced (User_Data);
    begin
       Ada.Wide_Wide_Text_IO.Put
         (Wide_Wide_Character'Val (To_Integer (Arguments (3))));
@@ -90,7 +126,12 @@ package body Skit.Tests is
    -- Evaluate_Trace --
    --------------------
 
-   function Evaluate_Trace (Arguments : Object_Array) return Object is
+   function Evaluate_Trace
+     (User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array)
+      return Object
+   is
+      pragma Unreferenced (User_Data);
    begin
       Ada.Text_IO.Put_Line ("trace: " & Handle.Image (Arguments (1)));
       return Arguments (1);
