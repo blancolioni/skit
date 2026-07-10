@@ -1,4 +1,4 @@
-# ADR 0006: Thread Primitive-Evaluator State Through a Parameter, Not the Machine
+# ADR 0006: Carry Primitive State in Client-Provided Handler Objects
 
 - **Status:** Proposed
 - **Date:** 2026-07-09
@@ -85,8 +85,15 @@ touches primitive state, so the only question is *where the access lives*, not
 - **Stable evaluator signature.** Skit's own pure primitives must not be forced
   to name state they do not use; churn in every evaluator is a cost.
 - **The machine already knows the binding.** `Eval_Primitive` holds the firing
-  primitive's payload ([skit-machines.adb:169](../../src/skit-machines.adb#L169));
-  exposing it is nearly free.
+  primitive's payload ([skit-machines.adb:169](../../src/skit-machines.adb#L169)),
+  and the reduction loop already fetches that primitive's record from the prim
+  table (`This.Prims (P)`,
+  [skit-machines.adb:351](../../src/skit-machines.adb#L351),
+  [457](../../src/skit-machines.adb#L457)). Whatever is stored in that record is
+  reached with no extra work.
+- **Per-call cost is on the hot path.** Primitives fire on every arithmetic /
+  control step; any per-call indirection the design forces (a table lookup, an
+  extra dispatch hop) is paid in the tightest loop the machine runs.
 
 ## Options considered
 
@@ -100,21 +107,13 @@ Add `access all User_Data_Interface'Class` as a field of
   blocking that unit from SPARK and reintroducing exactly the construct ADR 0004
   worked to remove from the crate's data structures. Rejected.
 
-### B. Revert to client-provided tagged primitives
+### C. Thread a context parameter; expose the binding identity
 
-Restore `Skit.Primitives.Abstraction'Class`; each binding is again a dispatching
-object holding its own state.
-
-- Pro: per-binding state is natural; matches what ADR 0005 said to keep.
-- Con: undoes ADR 0005's primitive simplification; stores class-wide values (or
-  access) in the prim table. Heavier than the problem needs. Held in reserve.
-
-### C. Thread a context parameter; expose the binding identity (proposed)
-
-Pass client state as a **parameter** into `Machine.Evaluate`, threaded to the
-evaluator call, and hand the evaluator the firing primitive's **identity** so the
-client can key its own per-binding table. Bundle both into one context record so
-the evaluator signature is stable:
+Keep the flat `Primitive_Evaluator` function pointer, but pass client state as a
+**parameter** into `Machine.Evaluate`, thread it to the evaluator call, and hand
+the evaluator the firing primitive's **identity** so the client keys its own
+per-binding table. Bundle both into one context record so the signature is
+stable:
 
 ```
 type Primitive_Context is record
@@ -126,59 +125,99 @@ type Primitive_Evaluator is access
   function (Context : Primitive_Context; Arguments : Object_Array) return Object;
 ```
 
-Call chain:
+- Pro: solves both axes — `User_Data` (which machine) + `Self` (which binding) —
+  with the access confined to a parameter (`Skit.Machines.Instance` gains no
+  access field, `Skit.Memory` untouched).
+- **Con: a per-call lookup on the hot path.** The machine fetches
+  `Prims (P).Evaluator` and calls it, but that shared evaluator learns *which
+  binding fired* only from `Self`, so it must look the real handler up in the
+  client's table on **every** primitive call, then dispatch to it. That is a hop
+  and a lookup the machine's own fetch already did — pure duplication, paid in
+  the reduction loop. The state exists; C just refuses to store it where the
+  machine already looks.
+- Con: `User_Data` still has to be threaded as a parameter through
+  `Machine.Evaluate` and `Evaluate_Application` purely to reach the evaluator.
+
+### B. Client-provided handler objects (proposed)
+
+Restore a client-provided primitive object — the polymorphism ADR 0005 listed as
+genuine and said to keep. The prim table stores a handler as a **by-value
+class-wide value** in its existing indefinite container; the machine dispatches a
+single primitive operation on it:
 
 ```
-Handle.Evaluate  (reads User_Data from Handle_Record)         -- stored in the Off boundary unit
-  → Machine.Evaluate (This; User_Data : access User_Data_Interface'Class)   -- parameter
-    → Evaluate_Application (This; User_Data)                                 -- parameter
-      → Call_Primitive → Evaluator ((User_Data, Self), Arguments)           -- skit-machines.adb:205
+type Primitive_Handler is interface;
+function Evaluate
+  (This : Primitive_Handler; Arguments : Object_Array) return Object is abstract;
 ```
 
-- Pro: solves both axes — `User_Data` (which machine) + `Self` (which binding).
-- Pro: the access is a parameter only; `Skit.Machines.Instance` gains no access
-  field, `Skit.Memory` is untouched, and the SPARK trajectory of ADR 0004 is
-  preserved.
-- Pro: one context record keeps the signature stable; pure primitives ignore the
-  context.
+Each handler carries its own state. For Skit's own pure primitives, Skit ships a
+trivial concrete `Function_Handler` wrapping a plain
+`access function (Arguments : Object_Array) return Object`, so
+`Handle.Primitive (2, Evaluate_Add'Access)` keeps working unchanged. A stateful
+consumer extends the interface: Leander's handler holds its `Handle`, argument /
+result marshalling types, and the host callback, so the end user supplies
+something as small as
+`type Handler is access procedure (H : Leander.Handles.Handle)` and Leander wraps
+it.
+
+- Pro: **no per-call lookup.** The machine already fetches `Prims (P)`; the state
+  is *in* that record, and dispatch is one indirect call — the same cost as the
+  current bare function pointer. C's shared-evaluator hop and table lookup both
+  vanish.
+- Pro: **no state threading.** Each handler holds its own machine reference; there
+  is no `User_Data` to store on the handle or pass through `Machine.Evaluate`.
+  `Machine.Evaluate`'s signature is unchanged.
+- Pro: matches ADR 0005's stated intent (keep `Skit.Primitives`), and the
+  consumer's binding surface is trivial.
+- Con: stores class-wide values in the prim table. Held **by value** in the
+  already-`Off` indefinite container, this introduces **no general access** —
+  dispatching is within the SPARK subset and the container was never a SPARK
+  candidate anyway, so the core-proof boundary is untouched either way.
+- Con: Skit's own pure primitives now register a `Function_Handler` wrapper
+  rather than a bare pointer — a one-time convenience type, absorbed by the
+  `Handle.Primitive` overloads so callers do not see it.
 
 ## Decision
 
-Adopt Option **C**.
+Adopt Option **B**.
 
-- Define `User_Data_Interface` (an empty tagged interface the client extends) and
-  a `Primitive_Context` bundling `User_Data : access User_Data_Interface'Class`
-  and `Self : Object`.
-- `Primitive_Evaluator` becomes
-  `access function (Context : Primitive_Context; Arguments : Object_Array) return Object`.
-- `User_Data` is **stored on `Skit.Handles.Handle_Record`** — the boundary unit
-  that is already `SPARK_Mode => Off` and already holds an access — set at
-  `New_Handle` (or a dedicated setter), never on `Skit.Machines.Instance`.
-- `Machine.Evaluate` and `Evaluate_Application` take
-  `access User_Data_Interface'Class` as an anonymous access **parameter**;
-  `Call_Primitive` constructs the `Primitive_Context` from that parameter and the
-  firing primitive's payload (`(F, Primitive_Object)`).
+- Define a `Primitive_Handler` interface with a single dispatching
+  `Evaluate (This; Arguments : Object_Array) return Object`.
+- The prim table stores handlers **by value as class-wide values** (indefinite
+  container); the reduction loop dispatches `Evaluate` on the fetched handler in
+  place of the current `Evaluator (Arguments)` call
+  ([skit-machines.adb:205](../../src/skit-machines.adb#L205)).
+- Skit provides a built-in concrete `Function_Handler` wrapping
+  `access function (Arguments : Object_Array) return Object`; the existing
+  `Handle.Primitive (Count | Modes, ...)` overloads construct it, so pure
+  primitives are unaffected.
+- Stateful consumers extend `Primitive_Handler`. No `User_Data` on the machine or
+  the handle; no parameter threaded through `Machine.Evaluate`; no `Self` lookup.
 
 ### Boundary the decision defends
 
 - `Skit.Memory` (proven core): unchanged — never references primitive state.
-- `Skit.Machines`: no stored access field; only an anonymous access parameter
-  threaded through the reduction loop. No new stored-access SPARK debt.
-- `Skit.Handles`: holds the single `access all User_Data_Interface'Class`,
-  consistent with its existing `SPARK_Mode => Off` status.
+- `Skit.Machines`: stores handlers by value; no general access introduced.
+  Dispatching is SPARK-legal; the unit stays `Off` only for its standard
+  containers, exactly as before. No new SPARK debt.
+- `Skit.Handles`: unchanged with respect to primitive state — carries no
+  `User_Data`.
 
 ## Consequences
 
 To be recorded once implemented. Expected:
 
-- The foreign-function bridge (Leander) recovers per-binding state by keying a
-  client-side table on `Context.Self`, scoped per machine via `Context.User_Data`
-  — no tagged primitives, no stored access on the machine.
-- The `Primitive_Evaluator` signature changes once; Skit's own pure primitives
-  gain an ignored `Context` parameter (a one-line churn each in
-  [skit-tests.adb](../../skit_tests/src/skit-tests.adb)).
-- `Skit.Machines` acquires an anonymous access parameter but no access field;
-  ADR 0004's core-proof boundary is untouched and its Machines stretch goal is
-  not foreclosed.
+- The foreign-function bridge (Leander) carries per-binding and per-machine state
+  directly in its handler object — no client-side table, no per-call lookup, no
+  identity threading.
+- The primitive registration type changes from a function pointer to a
+  `Primitive_Handler`; Skit's own pure primitives register through the built-in
+  `Function_Handler`, so [skit-tests.adb](../../skit_tests/src/skit-tests.adb)
+  changes only in how it constructs primitives, not in the evaluators themselves.
+- `Machine.Evaluate` keeps its current signature; the reduction loop's per-call
+  cost is unchanged (one indirect dispatch, as today).
+- `Skit.Machines` stores class-wide handlers by value; no general access, so
+  ADR 0004's core-proof boundary and its Machines stretch goal are both intact.
 - Unblocks [Leander ADR 0002](../../../docs/adr/0002-migrate-to-the-collapsed-skit-facade.md)
   blocker 2.
