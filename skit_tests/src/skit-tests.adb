@@ -146,7 +146,8 @@ package body Skit.Tests is
    begin
       Handle :=
         Skit.Handles.New_Handle
-          (Writer => Ada.Text_IO.Put'Access);
+          (Core_Size => 8192,
+           Writer => Ada.Text_IO.Put'Access);
       Handle.Bind ("#eq", Handle.Primitive (2, Evaluate_Eq'Access));
       Handle.Bind ("#leq", Handle.Primitive (2, Evaluate_Leq'Access));
       Handle.Bind ("#choose",
@@ -174,7 +175,7 @@ package body Skit.Tests is
          Open (File, In_File, "testlib.skit");
          while not End_Of_File (File) loop
             declare
-               Expr : constant String := Get_Line (File);
+               Expr   : constant String := Get_Line (File);
                Unused : constant Skit.Terms.Term :=
                           Skit.Parser.Parse (Expr, Bind'Access);
             begin

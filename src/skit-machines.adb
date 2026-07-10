@@ -26,7 +26,9 @@ package body Skit.Machines is
      (This      : in out Instance'Class;
       User_Data : access User_Data_Interface'Class);
 
-   procedure GC (This : in out Instance'Class);
+   procedure GC
+     (This : in out Instance'Class;
+      Xs   : in out Object_Array);
 
    ------------
    -- Append --
@@ -69,13 +71,20 @@ package body Skit.Machines is
    is
    begin
       if Skit.Memory.Is_Full (This.Core) then
-         This.GC;
-         if Skit.Memory.Is_Full (This.Core) then
-            raise Storage_Error with "out of memory";
-         end if;
-      end if;
+         declare
+            Xs : Object_Array := [Left, Right];
+         begin
+            This.GC (Xs);
 
-      return Skit.Memory.Append (This.Core, Left, Right);
+            if Skit.Memory.Is_Full (This.Core) then
+               raise Storage_Error with "out of memory";
+            end if;
+
+            return Skit.Memory.Append (This.Core, Xs (1), Xs (2));
+         end;
+      else
+         return Skit.Memory.Append (This.Core, Left, Right);
+      end if;
    end Apply;
 
    ----------
@@ -572,10 +581,15 @@ package body Skit.Machines is
    -- GC --
    --------
 
-   procedure GC (This : in out Instance'Class) is
+   procedure GC
+     (This : in out Instance'Class;
+      Xs   : in out Object_Array)
+   is
       use Skit.Memory;
    begin
-      Ada.Text_IO.Put_Line ("GC");
+      if Trace then
+         Ada.Text_IO.Put_Line ("GC");
+      end if;
       Before_GC (This.Core);
       for X of This.Internal loop
          Mark (This.Core, X);
@@ -584,6 +598,9 @@ package body Skit.Machines is
          Mark (This.Core, X);
       end loop;
       for X of This.Environment loop
+         Mark (This.Core, X);
+      end loop;
+      for X of Xs loop
          Mark (This.Core, X);
       end loop;
 
