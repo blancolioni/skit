@@ -10,21 +10,6 @@ package Skit is
    type Object is private;
    type Object_Array is array (Positive range <>) of Object;
 
-   Nil        : constant Object;
-   S          : constant Object;
-   K          : constant Object;
-   I          : constant Object;
-   C          : constant Object;
-   B          : constant Object;
-   S_Prime    : constant Object;
-   B_Star     : constant Object;
-   C_Prime    : constant Object;
-   Lambda     : constant Object;
-   Undefined  : constant Object;
-   Suspension : constant Object;
-   Sequence   : constant Object;
-   Seq_Value  : constant Object;
-
    function To_Object (X : Integer) return Object;
    function To_Object (X : Float) return Object;
    function To_Object (X : Long_Float) return Object;
@@ -38,14 +23,43 @@ package Skit is
      with Pre => Is_Float (X);
 
    function Is_Application (X : Object) return Boolean;
+   function Is_Symbol (X : Object) return Boolean;
+   function Is_Undefined (X : Object) return Boolean;
 
    type Variable_Index is range 1 .. 999;
 
    function To_Variable_Object (Index : Variable_Index) return Object;
 
+   type User_Data_Interface is limited interface;
+
+   type Argument_Mode is (Strict, Lazy);
+   type Argument_Mode_Array is array (Positive range <>) of Argument_Mode;
+
+   type Primitive_Evaluator_Interface is interface;
+
+   function Argument_Count
+     (This : Primitive_Evaluator_Interface)
+      return Natural
+      is abstract;
+
+   function Argument_Modes
+     (This : Primitive_Evaluator_Interface)
+      return Argument_Mode_Array
+      is abstract
+     with Post'Class => Argument_Modes'Result'Length = This.Argument_Count;
+
+   function Evaluate
+     (This      : Primitive_Evaluator_Interface;
+      User_Data : access User_Data_Interface'Class;
+      Arguments : Object_Array)
+      return Object
+      is abstract
+     with Pre'Class => Arguments'Length = Argument_Count (This);
+
 private
 
    type Object_Payload is mod 2 ** Payload_Size;
+   subtype Cell_Address is Object_Payload;
 
    type Object_Tag is
      (Integer_Object,
@@ -69,11 +83,11 @@ private
    Payload_S_Prime    : constant Object_Payload := 6;
    Payload_B_Star     : constant Object_Payload := 7;
    Payload_C_Prime    : constant Object_Payload := 8;
-   Payload_Lambda     : constant Object_Payload := 9;
-   Payload_Undefined  : constant Object_Payload := 10;
-   Payload_Suspension : constant Object_Payload := 11;
-   Payload_Sequence   : constant Object_Payload := 12;
-   Payload_Seq_Value  : constant Object_Payload := 13;
+   Payload_Undefined  : constant Object_Payload := 9;
+   Payload_Suspension : constant Object_Payload := 10;
+
+   subtype Combinator_Payload is
+     Object_Payload range Payload_S .. Payload_C_Prime;
 
    Nil        : constant Object := (Payload_Nil, Primitive_Object);
    S          : constant Object := (Payload_S, Primitive_Object);
@@ -84,14 +98,11 @@ private
    S_Prime    : constant Object := (Payload_S_Prime, Primitive_Object);
    B_Star     : constant Object := (Payload_B_Star, Primitive_Object);
    C_Prime    : constant Object := (Payload_C_Prime, Primitive_Object);
-   Lambda     : constant Object := (Payload_Lambda, Primitive_Object);
    Undefined  : constant Object := (Payload_Undefined, Primitive_Object);
    Suspension : constant Object := (Payload_Suspension, Primitive_Object);
-   Sequence   : constant Object := (Payload_Sequence, Primitive_Object);
-   Seq_Value  : constant Object := (Payload_Seq_Value, Primitive_Object);
 
    subtype Primitive_Function_Payload is
-     Object_Payload range 64 .. 255;
+     Object_Payload range 64 .. 4095;
 
    subtype Primitive_Variable_Payload is
      Object_Payload range 4096 .. 65535;
@@ -111,5 +122,12 @@ private
 
    function Is_Application (X : Object) return Boolean
    is (X.Tag = Application_Object);
+
+   function Is_Symbol (X : Object) return Boolean
+   is (X.Tag = Primitive_Object
+       and then X.Payload in Primitive_Variable_Payload);
+
+   function Is_Undefined (X : Object) return Boolean
+   is (X = Undefined);
 
 end Skit;

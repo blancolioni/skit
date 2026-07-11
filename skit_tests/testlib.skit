@@ -8,10 +8,12 @@
 !* #mul
 !/ #div
 !mod #mod
-!le #le
-!eq #eq
-!putChar #putChar
+!putChar #putchar
 !trace #trace
+!seq #seq
+!Y \f.(\x.f (x x)) (\x.f (x x))
+!eq \x.\y.#choose (#eq x y) false true
+!le \x.\y.#choose (#leq x y) false true
 !succ + 1
 !pred flip - 1
 !not \x.if x false true

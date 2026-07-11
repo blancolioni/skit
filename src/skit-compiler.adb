@@ -1,5 +1,7 @@
 package body Skit.Compiler is
 
+   function Is_S_Combinator (T : Skit.Terms.Term) return Boolean;
+
    function Abstract_Variable
      (Variable : String;
       Top      : Skit.Terms.Term)
@@ -7,7 +9,8 @@ package body Skit.Compiler is
 
    function Optimise
      (Top      : Skit.Terms.Term)
-      return Skit.Terms.Term;
+      return Skit.Terms.Term
+      with Pre => Is_S_Combinator (Top);
 
    -----------------------
    -- Abstract_Variable --
@@ -45,16 +48,30 @@ package body Skit.Compiler is
       return Skit.Terms.Term
    is
       use Skit.Terms;
+      Result : constant Skit.Terms.Term :=
+                 (if Is_Lambda (E)
+                  then Abstract_Variable
+                    (Get_Variable (E),
+                     Compile (Get_Body (E)))
+                  elsif Is_Application (E)
+                  then Apply
+                    (Compile (Get_Left (E)), Compile (Get_Right (E)))
+                  else E);
    begin
-      if Is_Lambda (E) then
-         return Abstract_Variable (Get_Variable (E),
-                                   Compile (Get_Body (E)));
-      elsif Is_Application (E) then
-         return Apply (Compile (Get_Left (E)), Compile (Get_Right (E)));
-      else
-         return E;
-      end if;
+      return Result;
    end Compile;
+
+   ---------------------
+   -- Is_S_Combinator --
+   ---------------------
+
+   function Is_S_Combinator (T : Skit.Terms.Term) return Boolean is
+      use Skit.Terms;
+   begin
+      return Is_Application (T)
+          and then Is_Application (Get_Left (T))
+          and then Is_Combinator (Get_Left (Get_Left (T)), Skit.S);
+   end Is_S_Combinator;
 
    --------------
    -- Optimise --
@@ -65,11 +82,6 @@ package body Skit.Compiler is
       return Skit.Terms.Term
    is
       use Skit.Terms;
-
-      function Is_S return Boolean
-      is (Is_Application (Top)
-          and then Is_Application (Get_Left (Top))
-          and then Is_Combinator (Get_Left (Get_Left (Top)), Skit.S));
 
       function Is_App_K (T : Term) return Boolean
       is (Is_Application (T)
@@ -89,64 +101,54 @@ package body Skit.Compiler is
       function App_B_R (T : Term) return Term
       is (Get_Right (T));
 
-      X : constant Term :=
-            (if Is_S
-             then Get_Right (Get_Left (Top))
-             else Primitive (Skit.Nil));
+      X : constant Term := Get_Right (Get_Left (Top));
+      Y : constant Term := Get_Right (Top);
 
-      Y : constant Term :=
-            (if Is_S
-             then Get_Right (Top)
-             else Primitive (Skit.Nil));
    begin
-      if Is_S then
-         if Is_App_K (X) then
-            if Is_App_K (Y) then
-               return Apply (Combinator (Skit.K),
-                             Apply (App_K (X), App_K (Y)));
-            elsif Is_Combinator (Y, Skit.I) then
-               return App_K (X);
-            elsif Is_App_B (Y) then
-               return Apply
-                 (Apply
-                    (Apply
-                         (Combinator (Skit.B_Star),
-                          App_K (X)),
-                     App_B_Q (Y)),
-                  App_B_R (Y));
-            else
-               return Apply
-                 (Apply
-                    (Combinator (Skit.B),
-                     App_K (X)),
-                  Y);
-            end if;
-         elsif Is_App_K (Y) then
-            if Is_App_B (X) then
-               return Apply
-                 (Apply
-                    (Apply
-                         (Combinator (Skit.C_Prime),
-                          App_B_Q (X)),
-                     App_B_R (X)),
-                  App_K (Y));
-            else
-               return Apply
-                 (Apply
-                    (Combinator (Skit.C), X),
-                  App_K (Y));
-            end if;
-         elsif Is_App_B (X) then
+      if Is_App_K (X) then
+         if Is_App_K (Y) then
+            return Apply (Combinator (Skit.K),
+                           Apply (App_K (X), App_K (Y)));
+         elsif Is_Combinator (Y, Skit.I) then
+            return App_K (X);
+         elsif Is_App_B (Y) then
             return Apply
-              (Apply
-                 (Apply
-                      (Combinator (Skit.S_Prime),
-                       App_B_Q (X)),
-                  App_B_R (X)),
-               Y);
+               (Apply
+                  (Apply
+                        (Combinator (Skit.B_Star),
+                        App_K (X)),
+                  App_B_Q (Y)),
+               App_B_R (Y));
          else
-            return Top;
+            return Apply
+               (Apply
+                  (Combinator (Skit.B),
+                  App_K (X)),
+               Y);
          end if;
+      elsif Is_App_K (Y) then
+         if Is_App_B (X) then
+            return Apply
+               (Apply
+                  (Apply
+                        (Combinator (Skit.C_Prime),
+                        App_B_Q (X)),
+                  App_B_R (X)),
+               App_K (Y));
+         else
+            return Apply
+               (Apply
+                  (Combinator (Skit.C), X),
+               App_K (Y));
+         end if;
+      elsif Is_App_B (X) then
+         return Apply
+            (Apply
+               (Apply
+                     (Combinator (Skit.S_Prime),
+                     App_B_Q (X)),
+               App_B_R (X)),
+            Y);
       else
          return Top;
       end if;

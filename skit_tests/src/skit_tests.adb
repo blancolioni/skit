@@ -2,42 +2,31 @@ with Skit.Tests;
 
 procedure Skit_Tests is
    use Skit.Tests;
-   Plus : constant Stack_Operation_Type :=
-            Prim (2);
 begin
    Initialize;
-   Test ("I x ==> x", [I, Int (1), Apply], Skit.To_Object (1));
-   Test ("K x y ==> x", [K, Int (42), Apply, Int (666), Apply],
-         Skit.To_Object (42));
-   Test ("S K S K ==> K",
-         [S, K, Apply, S, Apply, K, Apply],
-         Skit.K);
-   Test ("S K K x ==> x",
-         [S, K, Apply, K, Apply, Int (42), Apply],
-         Skit.To_Object (42));
-   Test ("SKI(KIS) ==> I",
-         [S, K, Apply, I, Apply, K, I, Apply, S, Apply, Apply],
-         Skit.I);
-   Test ("KS(I(SKSI)) ==> S",
-         [K, S, Apply, I, S, K, Apply, S, Apply, I, Apply, Apply, Apply],
-         Skit.S);
-   Test ("+ (I 1) 2 ==> 3",
-         [Plus, I, Int (1), Apply, Apply, Int (2), Apply],
+
+   --  if True then
+   --     Test ("#eq 0 0", 1);
+   --     Test ("#choose 1 3 2", 2);
+   --     Test ("eq 0 0 2 3", 2);
+   --     return;
+   --  end if;
+
+   Test ("K I", "K I");
+   Test ("I 23", Skit.To_Object (23));
+   Test ("K 42 666", Skit.To_Object (42));
+   Test ("S K K 99", Skit.To_Object (99));
+   Test ("S K I (K I S) 56", Skit.To_Object (56));
+
+   Test ("+ (I 1) 2",
          Skit.To_Object (3));
-   Test_Compiler ("+ 1 2 ==> 3",
-         [Plus, Int (1), Apply, Int (2), Apply],
+   Test ("+ 1 2",
          Skit.To_Object (3));
-   Test_Compiler
-     ("\x.x ==> I",
-      [Var ("x"), Var ("x"), Lambda],
-      Skit.I);
-   Test_Compiler
-     ("(\x.+ x x) 5 ==> 10",
-      [Var ("x"),
-       Plus, Var ("x"), Apply,
-       Var ("x"), Apply,
-       Lambda,
-       Int (5), Apply],
+   Test
+     ("\x.x",
+      "I");
+   Test
+     ("(\x.+ x x) 5",
       Skit.To_Object (10));
    Test ("1", Skit.To_Object (1));
    Test ("+ 1 1", Skit.To_Object (2));
@@ -75,7 +64,7 @@ begin
    Test ("false 1 2", 2);
    Test ("true 1 2", 1);
    Test ("(\x.eq x 0 true false) 0 2 3", 2);
-   Test ("true", Skit.K);
+   Test ("true", "K");
    Test ("succ 41", 42);
    Test ("pred 8088", 8087);
    Test ("* 4 (* 3 (* 2 (* 1 1)))", 24);

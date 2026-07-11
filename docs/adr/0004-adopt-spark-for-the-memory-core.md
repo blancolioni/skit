@@ -1,8 +1,84 @@
 # ADR 0004: Adopt SPARK for the Memory Core
 
-- **Status:** Proposed
+- **Status:** Proposed — prerequisites landed, proof not yet started (see Status update 2026-07-09)
 - **Date:** 2026-07-07
 - **Deciders:** Fraser Wilson
+
+## Status update (2026-07-09)
+
+[ADR 0005](0005-collapse-the-machine-interface-tower.md) has landed, and it went
+further than its own text described: the interface tower did not merely collapse
+to a concrete `Skit.Machine` — the whole crate was reorganised behind a single
+concrete facade `Skit.Handles.Handle`, and the collector now lives in a private
+`Skit.Memory` (no longer `Skit.Impl.Memory`). The consequence for this ADR is
+that **the structural half is done and the proof half is untouched.** Net: skit
+is at the "amenable" line, not across it.
+
+### What the reorganisation already delivered for this ADR
+
+- **Hard blocker gone.** No `access all Abstraction'Class` survives anywhere.
+  The general access-to-class-wide that this ADR named its one hard obstacle no
+  longer exists.
+- **Core isolated and access-free.** `Skit.Memory`
+  ([skit-memory.ads](../../src/skit-memory.ads)) is a limited discriminated
+  record over a flat `Cell_Array`, with **no access types, no containers, no
+  exceptions, no dispatch**. It already carries `Pre`/`Post`
+  (`Is_Application`, `Is_Full`, `not Is_Full`). It is structurally inside the
+  SPARK subset today.
+- **"Core restructuring required" is largely obsolete.** The three couplings
+  that section demanded be lifted are already absent from the new core:
+  - *Access boundary* — there is no `Skit.Memory.Reference`/`Create`. The only
+    access value and allocator live in `Skit.Handles.New_Handle`
+    ([skit-handles.adb:151](../../src/skit-handles.adb#L151)); the collector is
+    held as a component and operated on by `in out`.
+  - *Container field* — the root-set `Container_Lists.List` is gone from the
+    core. The remaining standard containers sit in `Skit.Machines`, one layer
+    out, not in `Skit.Memory`.
+  - *Statistics* — no `GC_Time : Duration` in the core record; only
+    `Alloc_Count`/`Reclaimed : Natural`, which are provable as-is or trivially
+    ghostable.
+- **Dispatch-free hot path.** The evaluator reaches the collector directly on
+  the concrete component (`Skit.Memory.Left (This.Core, App)`,
+  [skit-machines.adb:150-154](../../src/skit-machines.adb#L150-L154)), which
+  both restores `Inline_Always` and satisfies SPARK's supported direction —
+  a `SPARK_Mode=On` `Skit.Memory` used by `SPARK_Mode=Off` `Skit.Machines`.
+
+### What remains — the actual proof work
+
+- **No SPARK adoption has begun.** There is no `SPARK_Mode` pragma anywhere in
+  the tree and no `gnatprove` in the crate. `skit.gpr` is unchanged. Staged
+  migration steps 1–5 below are all still ahead.
+- **The core's contracts are too shallow to discharge.** Today's `Pre`
+  guarantees `Is_Application (App)` but *not* that `App.Payload` indexes a live
+  cell, so `gnatprove` will flag index checks on
+  `Left`/`Right`/`Set_Left`/`Set_Right`/`Move`/`Copy`, an overflow/range check
+  on `Append` (`Free := @ + 1` with only `not Is_Full` known), and range checks
+  on the two-space modular arithmetic
+  ([skit-memory.adb:8-17](../../src/skit-memory.adb#L8-L17)). Discharging these
+  needs the **arena type predicate / invariant** anticipated in Open Questions:
+  a `Predicate` on `Instance` tying `Free`/`Top`/`Scan`/`From_Space`/`To_Space`/
+  `Space_Size` together and asserting live payloads point into the active space.
+  This predicate *is* the deliverable — properties 1–4 do not fall out of the
+  existing contracts.
+
+### Corrections to the body below
+
+The analysis below predates the reorganisation and names units that no longer
+exist. Read with these substitutions: `Skit.Impl.Memory` → `Skit.Memory`;
+`Skit.Console`/`Skit.Logging`/`Skit.Library`/`Skit.Environment` → folded into
+`Skit.Handles`/`Skit.Machines` or deleted; the interface tower → the concrete
+`Skit.Handles`/`Skit.Machines` facade. The scope conclusion is unchanged:
+`Skit.Memory` + most of root `Skit` are the proof targets; `Skit.Machines`
+(standard containers, side-effecting `Primitive_Evaluator`) is a stretch;
+`Skit.Terms` (storage pool + `System.Address`), `Skit.Handles`, and all I/O stay
+`SPARK_Mode => Off` by deliberate scope.
+
+### Downstream
+
+Leander does not yet compile against the reorganised skit (its `Skit.Impl`,
+`Skit.Machine`, `Skit.Stacks`, `Skit.Primitives`, `Skit.Environment`,
+`Skit.Library` uses are all dead). That migration is tracked separately and is
+not a precondition for the proof work here — the two proceed independently.
 
 ## Context
 
