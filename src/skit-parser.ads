@@ -6,7 +6,7 @@ package Skit.Parser is
 
    function Parse
      (Source    : String;
-      Bind_Value : not null access
+      Bind_Value : access
         procedure (Name : String; Term : Skit.Terms.Term))
       return Skit.Terms.Term;
 

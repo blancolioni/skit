@@ -8,7 +8,7 @@ package body Skit.Parser is
 
    function Parse
      (Source    : String;
-      Bind_Value : not null access
+      Bind_Value : access
         procedure (Name : String; Term : Skit.Terms.Term))
       return Skit.Terms.Term
    is
@@ -171,7 +171,9 @@ package body Skit.Parser is
             E    : constant Skit.Terms.Term := Parse_Expression;
             C    : constant Skit.Terms.Term := Skit.Compiler.Compile (E);
          begin
-            Bind_Value (Name, C);
+            if Bind_Value /= null then
+               Bind_Value (Name, C);
+            end if;
             return Skit.Terms.Primitive (Skit.Nil);
          end;
       else

@@ -27,6 +27,16 @@ private package Skit.Machines is
       Value : Object)
      with Inline_Always, Pre => Value /= Nil;
 
+   function Left
+     (This : Instance'Class;
+      App  : Object)
+      return Object;
+
+   function Right
+     (This : Instance'Class;
+      App  : Object)
+      return Object;
+
    type Lazy_Argument_Array is array (Positive range <>) of Boolean;
 
    function Primitive
@@ -77,7 +87,6 @@ private
          R                 : Object_Array (Register) := [others => Nil];
          Prims             : Primitive_Function_Vectors.Vector;
          Environment       : Environment_Maps.Map;
-         Core              : Skit.Memory.Instance (Core_Size);
          Alloc_Count       : Natural := 0;
          Active_Cells      : Natural := 0;
          Max_Active_Cells  : Natural := 0;
@@ -86,6 +95,19 @@ private
          GC_Time           : Duration := 0.0;
          GC_Count          : Natural := 0;
          Eval_Time         : Duration := 0.0;
+         Core              : Skit.Memory.Instance (Core_Size);
       end record;
+
+   function Left
+     (This : Instance'Class;
+      App  : Object)
+      return Object
+   is (Skit.Memory.Left (This.Core, App));
+
+   function Right
+     (This : Instance'Class;
+      App  : Object)
+      return Object
+   is (Skit.Memory.Right (This.Core, App));
 
 end Skit.Machines;

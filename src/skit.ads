@@ -24,6 +24,7 @@ package Skit is
 
    function Is_Application (X : Object) return Boolean;
    function Is_Symbol (X : Object) return Boolean;
+   function Is_Undefined (X : Object) return Boolean;
 
    type Variable_Index is range 1 .. 999;
 
@@ -53,7 +54,7 @@ package Skit is
       Arguments : Object_Array)
       return Object
       is abstract
-     with Pre'Class => Arguments'Length = This.Argument_Count;
+     with Pre'Class => Arguments'Length = Argument_Count (This);
 
 private
 
@@ -125,5 +126,8 @@ private
    function Is_Symbol (X : Object) return Boolean
    is (X.Tag = Primitive_Object
        and then X.Payload in Primitive_Variable_Payload);
+
+   function Is_Undefined (X : Object) return Boolean
+   is (X = Undefined);
 
 end Skit;

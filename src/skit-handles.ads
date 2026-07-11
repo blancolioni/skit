@@ -26,6 +26,24 @@ package Skit.Handles is
       return Object;
    --  Pop an object from the top of the stack and return it
 
+   procedure Push
+     (This : Handle'Class;
+      X    : Object);
+
+   procedure Apply (This : Handle'Class);
+
+   function Left
+     (This : Handle'Class;
+      App  : Object)
+      return Object
+     with Pre => Is_Application (App);
+
+   function Right
+     (This : Handle'Class;
+      App  : Object)
+      return Object
+     with Pre => Is_Application (App);
+
    function Install
      (This     : Handle'Class;
       Top_Term : Skit.Terms.Term;

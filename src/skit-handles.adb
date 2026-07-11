@@ -1,5 +1,9 @@
 with Skit.Machines.Report;
 
+------------------
+-- Skit.Handles --
+------------------
+
 package body Skit.Handles is
 
    function To_Symbol_Object
@@ -7,18 +11,14 @@ package body Skit.Handles is
       Name : String)
       return Object;
 
-   ---------------
-   -- Primitive --
-   ---------------
+   -----------
+   -- Apply --
+   -----------
 
-   function Primitive
-     (This      : Handle'Class;
-      Primitive : Primitive_Evaluator_Interface'Class)
-      return Object
-   is
+   procedure Apply (This : Handle'Class) is
    begin
-      return This.H.Machine.Primitive (Primitive);
-   end Primitive;
+      This.H.Machine.Apply;
+   end Apply;
 
    ----------
    -- Bind --
@@ -111,6 +111,19 @@ package body Skit.Handles is
       return Install (Top_Term);
    end Install;
 
+   ----------
+   -- Left --
+   ----------
+
+   function Left
+     (This : Handle'Class;
+      App  : Object)
+      return Object
+   is
+   begin
+      return This.H.Machine.Left (App);
+   end Left;
+
    ------------
    -- Lookup --
    ------------
@@ -156,6 +169,31 @@ package body Skit.Handles is
       return This.H.Machine.Pop;
    end Pop;
 
+   ---------------
+   -- Primitive --
+   ---------------
+
+   function Primitive
+     (This      : Handle'Class;
+      Primitive : Primitive_Evaluator_Interface'Class)
+      return Object
+   is
+   begin
+      return This.H.Machine.Primitive (Primitive);
+   end Primitive;
+
+   ----------
+   -- Push --
+   ----------
+
+   procedure Push
+     (This : Handle'Class;
+      X    : Object)
+   is
+   begin
+      This.H.Machine.Push (X);
+   end Push;
+
    ------------
    -- Report --
    ------------
@@ -164,6 +202,19 @@ package body Skit.Handles is
    begin
       Skit.Machines.Report (This.H.Machine);
    end Report;
+
+   -----------
+   -- Right --
+   -----------
+
+   function Right
+     (This : Handle'Class;
+      App  : Object)
+      return Object
+   is
+   begin
+      return This.H.Machine.Left (App);
+   end Right;
 
    ----------------------
    -- To_Symbol_Object --
