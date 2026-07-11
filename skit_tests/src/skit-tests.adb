@@ -396,18 +396,24 @@ package body Skit.Tests is
 
       declare
          Result : constant Skit.Object := Handle.Pop;
+         Empty  : constant Boolean := Handle.Stack_Empty;
       begin
          Put (Name, 38);
 
-         if Result = Expected then
+         if Result = Expected and then Empty then
             Pass := @ + 1;
             Ada.Text_IO.Put_Line ("PASS");
          else
             Fail := @ + 1;
-            Ada.Text_IO.Put ("expected: ");
-            Handle.Write (Expected);
-            Ada.Text_IO.Put ("; found: ");
-            Handle.Write (Result);
+            if Result /= Expected then
+               Ada.Text_IO.Put ("expected: ");
+               Handle.Write (Expected);
+               Ada.Text_IO.Put ("; found: ");
+               Handle.Write (Result);
+            end if;
+            if not Empty then
+               Ada.Text_IO.Put (" [stack not empty]");
+            end if;
             Ada.Text_IO.New_Line;
          end if;
       end;
@@ -434,19 +440,25 @@ package body Skit.Tests is
 
       declare
          Result : constant Skit.Object := Handle.Pop;
+         Empty  : constant Boolean := Handle.Stack_Empty;
       begin
          Put (Source, 38);
          Ada.Text_IO.Set_Col (40);
 
-         if Result = Expected then
+         if Result = Expected and then Empty then
             Ada.Text_IO.Put_Line ("PASS");
             Pass := @ + 1;
          else
             Fail := @ + 1;
-            Ada.Text_IO.Put ("expected: ");
-            Handle.Write (Expected);
-            Ada.Text_IO.Put ("; found: ");
-            Handle.Write (Result);
+            if Result /= Expected then
+               Ada.Text_IO.Put ("expected: ");
+               Handle.Write (Expected);
+               Ada.Text_IO.Put ("; found: ");
+               Handle.Write (Result);
+            end if;
+            if not Empty then
+               Ada.Text_IO.Put (" [stack not empty]");
+            end if;
             Ada.Text_IO.New_Line;
          end if;
       end;
@@ -488,23 +500,28 @@ package body Skit.Tests is
       Handle.Evaluate;
 
       declare
-         Result : constant String :=
-                    Handle.Image (Handle.Pop);
+         Popped : constant Object := Handle.Pop;
+         Empty  : constant Boolean := Handle.Stack_Empty;
+         Result : constant String := Handle.Image (Popped);
       begin
          Put (Source, 38);
          Ada.Text_IO.Set_Col (40);
 
-         if Result = Expected then
+         if Result = Expected and then Empty then
             Ada.Text_IO.Put_Line ("PASS");
             Pass := @ + 1;
          else
             Fail := @ + 1;
-            Ada.Text_IO.Put ("expected: ");
-            Ada.Text_IO.Put (Expected);
-            Ada.Text_IO.Put ("; found: ");
-            Ada.Text_IO.Put (Result);
+            if Result /= Expected then
+               Ada.Text_IO.Put ("expected: ");
+               Ada.Text_IO.Put (Expected);
+               Ada.Text_IO.Put ("; found: ");
+               Ada.Text_IO.Put (Result);
+            end if;
+            if not Empty then
+               Ada.Text_IO.Put (" [stack not empty]");
+            end if;
             Ada.Text_IO.New_Line;
-            Fail := @ + 1;
          end if;
       end;
 

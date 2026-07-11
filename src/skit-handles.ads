@@ -26,6 +26,11 @@ package Skit.Handles is
       return Object;
    --  Pop an object from the top of the stack and return it
 
+   function Stack_Empty
+     (This : Handle'Class)
+      return Boolean;
+   --  True when the evaluation stack holds no objects
+
    procedure Push
      (This : Handle'Class;
       X    : Object);

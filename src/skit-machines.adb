@@ -581,7 +581,15 @@ package body Skit.Machines is
          end if;
       end loop;
 
-      This.Push (It);
+      --  A non-primitive head (a scalar result) was already pushed onto the
+      --  stack by the else branch in the loop above, where it also feeds the
+      --  strict-argument resumption in Eval_Suspension.  Only a primitive
+      --  head (a bare combinator or an under-saturated partial application)
+      --  still needs pushing here; pushing an atom again would leave a
+      --  duplicate on the stack.
+      if It.Tag = Primitive_Object then
+         This.Push (It);
+      end if;
       Collect_Result;
 
    end Evaluate_Application;
@@ -681,6 +689,15 @@ package body Skit.Machines is
          S := Skit.Memory.Right (This.Core, S);
       end return;
    end Pop;
+
+   -----------------
+   -- Stack_Empty --
+   -----------------
+
+   function Stack_Empty
+     (This : Instance'Class)
+      return Boolean
+   is (This.Internal (Stack) = Nil);
 
    ---------------
    -- Primitive --

@@ -27,6 +27,11 @@ private package Skit.Machines is
       Value : Object)
      with Inline_Always, Pre => Value /= Nil;
 
+   function Stack_Empty
+     (This : Instance'Class)
+      return Boolean
+     with Inline_Always;
+
    function Left
      (This : Instance'Class;
       App  : Object)

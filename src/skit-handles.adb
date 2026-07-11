@@ -169,6 +169,18 @@ package body Skit.Handles is
       return This.H.Machine.Pop;
    end Pop;
 
+   -----------------
+   -- Stack_Empty --
+   -----------------
+
+   function Stack_Empty
+     (This : Handle'Class)
+      return Boolean
+   is
+   begin
+      return This.H.Machine.Stack_Empty;
+   end Stack_Empty;
+
    ---------------
    -- Primitive --
    ---------------
@@ -213,7 +225,7 @@ package body Skit.Handles is
       return Object
    is
    begin
-      return This.H.Machine.Left (App);
+      return This.H.Machine.Right (App);
    end Right;
 
    ----------------------
