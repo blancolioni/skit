@@ -68,8 +68,12 @@ private
          To_Space          : Cell_Address;
          Space_Size        : Cell_Address;
          Scan              : Cell_Address;
+         Copied            : Natural := 0;
+         Static_Copied     : Natural := 0;
+         Transient_Copied  : Natural := 0;
          Alloc_Count       : Natural := 0;
          Reclaimed         : Natural := 0;
+         Static_Top        : Cell_Address := 0;
       end record;
 
 end Skit.Memory;

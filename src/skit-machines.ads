@@ -95,8 +95,6 @@ private
          Alloc_Count       : Natural := 0;
          Active_Cells      : Natural := 0;
          Max_Active_Cells  : Natural := 0;
-         Total_Alloc_Count : Natural := 0;
-         Reclaimed         : Natural := 0;
          GC_Time           : Duration := 0.0;
          GC_Count          : Natural := 0;
          Eval_Time         : Duration := 0.0;
