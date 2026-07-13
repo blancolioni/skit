@@ -1,4 +1,5 @@
 with Ada.Text_IO;
+with Skit.Memory.Report;
 
 procedure Skit.Machines.Report
   (This : Instance'Class)
@@ -14,10 +15,5 @@ begin
       & " @"
       & Natural'Image (Natural (This.GC_Time * 1000.0))
       & "ms");
-   Ada.Text_IO.Put_Line
-     ("Allocated cells:"
-      & Natural'Image (This.Total_Alloc_Count));
-   Ada.Text_IO.Put_Line
-     ("Reclaimed cells:"
-      & Natural'Image (This.Reclaimed));
+   Skit.Memory.Report (This.Core);
 end Skit.Machines.Report;

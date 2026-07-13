@@ -1,6 +1,7 @@
 with Ada.Calendar;
 with Ada.Text_IO;
 with Skit.Debug;
+with Skit.Memory.Report;
 
 package body Skit.Machines is
 
@@ -71,8 +72,6 @@ package body Skit.Machines is
       return Object
    is
    begin
-      This.Alloc_Count := @ + 1;
-      This.Total_Alloc_Count := @ + 1;
       if Skit.Memory.Is_Full (This.Core) then
          declare
             Xs : Object_Array := [Left, Right];
@@ -82,6 +81,8 @@ package body Skit.Machines is
             if Skit.Memory.Is_Full (This.Core) then
                raise Storage_Error with "out of memory";
             end if;
+
+            Skit.Memory.Report (This.Core);
 
             return Skit.Memory.Append (This.Core, Xs (1), Xs (2));
          end;
