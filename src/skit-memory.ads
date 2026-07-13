@@ -74,6 +74,13 @@ private
          Alloc_Count       : Natural := 0;
          Reclaimed         : Natural := 0;
          Static_Top        : Cell_Address := 0;
+         --  Write-barrier instrumentation: count Set_Left/Set_Right writes
+         --  that store a young (this-epoch) application pointer into a static
+         --  (survived-last-GC) cell -- i.e. the old->young references a
+         --  generational nursery collector would keep in a remembered set.
+         Remembered_Writes : Natural := 0;  --  total over the run
+         Epoch_Remembered  : Natural := 0;  --  in the current inter-GC epoch
+         Max_Remembered    : Natural := 0;  --  max epoch count seen
       end record;
 
 end Skit.Memory;

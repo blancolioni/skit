@@ -19,4 +19,9 @@ begin
       & This.Static_Copied'Image
       & "; transient:"
       & This.Transient_Copied'Image);
+   Ada.Text_IO.Put_Line
+     ("Static<-young writes: total"
+      & This.Remembered_Writes'Image
+      & "  max/epoch:"
+      & This.Max_Remembered'Image);
 end Skit.Memory.Report;

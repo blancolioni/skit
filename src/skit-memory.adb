@@ -63,6 +63,10 @@ package body Skit.Memory is
    procedure Before_GC (This : in out Instance) is
    begin
       Flip (This);
+      if This.Epoch_Remembered > This.Max_Remembered then
+         This.Max_Remembered := This.Epoch_Remembered;
+      end if;
+      This.Epoch_Remembered := 0;
       This.Copied := 0;
       This.Static_Copied := 0;
       This.Transient_Copied := 0;
@@ -224,6 +228,13 @@ package body Skit.Memory is
       To   : Object)
    is
    begin
+      if App.Payload < This.Static_Top
+        and then Is_Application (To)
+        and then To.Payload >= This.Static_Top
+      then
+         This.Remembered_Writes := @ + 1;
+         This.Epoch_Remembered  := @ + 1;
+      end if;
       This.Core (App.Payload).Left := To;
    end Set_Left;
 
@@ -237,6 +248,13 @@ package body Skit.Memory is
       To   : Object)
    is
    begin
+      if App.Payload < This.Static_Top
+        and then Is_Application (To)
+        and then To.Payload >= This.Static_Top
+      then
+         This.Remembered_Writes := @ + 1;
+         This.Epoch_Remembered  := @ + 1;
+      end if;
       This.Core (App.Payload).Right := To;
    end Set_Right;
 
