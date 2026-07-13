@@ -178,6 +178,53 @@ not assumed:
   spine allocation and collection frequency fall.
 - Re-run the DWARF eval profile; confirm push/append/GC collapse.
 
+## Garbage collection: frequency vs volume, and a parked follow-up
+
+Total GC cost has two independent factors: **how often** a collection fires
+(frequency, driven by allocation rate) and **how much** each collection copies
+(volume, since the copying collector's cost is O(live data), not O(garbage)).
+This ADR attacks **frequency**: array pushes stop allocating, so the spine no
+longer fills the core and drives collections. That gain applies at every heap
+size.
+
+An empirical measurement clarified the volume side and led to parking a second
+idea. Instrumenting the collector to classify surviving cells as "also survived
+the previous collection" (old) vs "allocated since" (young) gave:
+
+- **~90% old** at small heap sizes, but the ratio is heap-size dependent;
+- it falls and plateaus at roughly **40% old / 60% young-live** as the heap
+  grows and collections become infrequent.
+
+The heap-size dependence shows the "survived the previous GC" test is a
+**frequency artifact**, not a reliable measure of immortality: with a small
+nursery little young data accumulates between collections, so survivors look
+almost entirely old. The honest steady-state composition of the live set at
+collection time is ~40% long-lived (dominated by the installed graph, which is
+effectively immortal — see [ADR 0003](0003-machine-is-a-pure-combinator-evaluator.md))
+and ~60% a genuine transient working set that reduction produces and that must
+be copied. A larger heap *defers* collecting that working set but does not
+remove it.
+
+That reopens an optimisation — **segregate the immortal installed graph into a
+non-collected region so the collector stops re-copying it** — whose ceiling is
+therefore about 40% of per-collection copy volume at realistic heap sizes (more
+under memory pressure). It is **parked**, deliberately, for two reasons:
+
+1. It attacks *volume*, the secondary factor; this ADR attacks *frequency*, the
+   universal one. Frequency should be reduced first.
+2. Its true payoff is only measurable *after* this ADR lands: the prize is
+   (remaining GC copy time) × (immortal fraction), and this ADR changes the
+   first term.
+
+When picked up, it should be gated on two measurements: re-profiling GC cost
+after this ADR, and a **provenance cross-check** — count survivors below the
+install high-water mark. If that ≈ the 40% old fraction, the immortal set is the
+installed graph and an install-watermark static region (non-moving, scanned as
+roots for old→young pointers) captures it cleanly and leak-free; if it is much
+less, evaluation itself creates long-lived data and a real generational scheme
+(age ≥ N tenuring plus a periodic major collection) would be needed instead.
+Either way it is a separate ADR, not this one.
+
 ## Consequences
 
 To be recorded once implemented. Expected:
