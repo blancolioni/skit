@@ -1,8 +1,55 @@
 # ADR 0007: Array-Backed Spine Stacks
 
-- **Status:** Proposed
+- **Status:** Rejected (2026-07-13) — implemented and measured ~26% slower; see Outcome.
 - **Date:** 2026-07-13
 - **Deciders:** Fraser Wilson
+
+## Outcome (2026-07-13)
+
+Implemented and benchmarked against the cons-list stacks on the main branch,
+workload `print (sum [1..10000])`, `-O3 -gnatp`, with `push`/`pop` inlined and
+the stacks as **raw `Object` arrays** (no container overhead; 6 total
+allocations across the run, max depths 20 / 34 / 20012):
+
+| stacks | wall-clock (real) |
+|--------|-------------------|
+| array-backed (this ADR) | 4.53 s, 4.29 s |
+| cons-list (main) | 3.43 s, 3.39 s, 3.62 s |
+
+The array version is **~26% slower**. **Rejected; do not merge; keep the
+cons-list stacks.**
+
+### Why the profile misled
+
+The profile that motivated this ADR showed the array version eliminating
+`skit__memory__append` (16% → 0.05%) and GC (11% → 0.26%). Both real — and both
+irrelevant to wall-clock, because:
+
+- **Cons "allocation" was never `malloc`.** `Append` bump-allocates into the
+  pre-allocated Core (`Core (Free) := (V, S); Free := Free + 1`) — two writes and
+  an increment, about the cost of an array store. The 16% was frequency, not
+  per-op expense.
+- **Cons stacks are cache-local.** Stack cells live *in the Core, interleaved
+  with the graph nodes being reduced* — the same lines the reducer already
+  touches. The array stacks are a second, cold region; the `sum` spine alone
+  reaches ~20 000 entries (~80 KB) walked constantly, adding cache misses per
+  push/pop that outweigh the eliminated allocation.
+- **Percentages describe distribution, not the counterfactual.** "27% in
+  alloc/GC" said where cycles went, not what replacing that machinery would
+  cost. The replacement cost more than it saved.
+
+The lesson: a wall-clock A/B is the only arbiter; profile share does not predict
+the cost of removing a component. Confirm with timing before committing to a
+structural change like this one.
+
+### What this does not overturn
+
+The GC/frequency-vs-volume finding recorded below stands (allocation is a cheap
+in-Core bump; the parked static-region idea has no prize to chase). Unrelated
+wins made during this investigation are independent and retained. The remaining
+evaluation cost is a tight reduction loop bound by graph access and `Object`
+tag decode, which points at object representation
+([ADR 0001](0001-object-representation.md)), not the stacks.
 
 ## Context
 
@@ -227,13 +274,21 @@ Either way it is a separate ADR, not this one.
 
 ## Consequences
 
-To be recorded once implemented. Expected:
+Measured, not predicted (this ADR was implemented and then rejected — see
+**Outcome** above):
 
-- Push becomes an index bump; the per-push application-cell allocation and the
-  collections it drove are gone.
-- The ~50% push + ~16% append + ~11% GC of evaluation shrinks substantially, the
-  largest gains on allocation-heavy workloads.
-- The collector fires only for real graph construction, not for stack traffic.
-- The spine-rooting mechanism moves from heap reachability to array-slot scanning
-  — a smaller, more explicit root set, which also simplifies reasoning for a
-  future SPARK effort ([ADR 0004](0004-adopt-spark-for-the-memory-core.md)).
+- Push *did* become an index bump and allocation/GC *were* eliminated from the
+  profile (`append` 16% → 0.05%, GC 11% → 0.26%) — yet evaluation ran **~26%
+  slower** in wall-clock. The predicted "large gain" was wrong.
+- The eliminated cost was cheap and cache-local to begin with (in-Core bump
+  allocation, stack cells interleaved with the working graph); the array
+  replacement added a cold second memory region and lost more to cache misses
+  than it saved.
+- The cons-list stacks on main are retained. The array branch is not merged.
+- The intended SPARK simplification does not materialise, because the design is
+  rejected on performance grounds first.
+
+The durable takeaway for future perf work: **validate structural changes with a
+wall-clock A/B before committing.** Profile share identifies where time is
+spent; it does not predict the cost of removing a component, and here it pointed
+the wrong way.
