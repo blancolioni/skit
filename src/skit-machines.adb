@@ -1,11 +1,11 @@
 with Ada.Calendar;
 with Ada.Text_IO;
 with Skit.Debug;
-with Skit.Memory.Report;
 
 package body Skit.Machines is
 
-   Trace : constant Boolean := False;
+   Trace      : constant Boolean := False;
+   Instrument : constant Boolean := False;
 
    function Apply
      (This        : in out Instance'Class;
@@ -72,6 +72,9 @@ package body Skit.Machines is
       return Object
    is
    begin
+      if Instrument then
+         This.Alloc_Count := @ + 1;
+      end if;
       if Skit.Memory.Is_Full (This.Core) then
          declare
             Xs : Object_Array := [Left, Right];
@@ -81,8 +84,6 @@ package body Skit.Machines is
             if Skit.Memory.Is_Full (This.Core) then
                raise Storage_Error with "out of memory";
             end if;
-
-            Skit.Memory.Report (This.Core);
 
             return Skit.Memory.Append (This.Core, Xs (1), Xs (2));
          end;
@@ -134,7 +135,7 @@ package body Skit.Machines is
    is
       use Ada.Calendar;
       Start : constant Time := Clock;
-      X : constant Object := This.Pop;
+      X     : constant Object := This.Pop;
    begin
       case X.Tag is
          when Integer_Object =>
@@ -159,7 +160,7 @@ package body Skit.Machines is
    --------------------------
 
    procedure Evaluate_Application
-     (This  : in out Instance'Class;
+     (This      : in out Instance'Class;
       User_Data : access User_Data_Interface'Class)
    is
 
@@ -603,33 +604,54 @@ package body Skit.Machines is
      (This : in out Instance'Class;
       Xs   : in out Object_Array)
    is
-      use Ada.Calendar;
       use Skit.Memory;
-      Start : constant Time := Clock;
    begin
-      if Trace then
-         Ada.Text_IO.Put_Line ("GC");
+      if Trace or else Instrument then
+         declare
+            use Ada.Calendar;
+            Start : constant Time := Clock;
+         begin
+            Ada.Text_IO.Put_Line ("GC");
+            Before_GC (This.Core);
+            for X of This.Internal loop
+               Mark (This.Core, X);
+            end loop;
+            for X of This.R loop
+               Mark (This.Core, X);
+            end loop;
+            for X of This.Environment loop
+               Mark (This.Core, X);
+            end loop;
+            for X of Xs loop
+               Mark (This.Core, X);
+            end loop;
+
+            GC (This.Core);
+
+            After_GC (This.Core);
+            This.GC_Time := @ + (Clock - Start);
+         end;
+      else
+         Before_GC (This.Core);
+         for X of This.Internal loop
+            Mark (This.Core, X);
+         end loop;
+         for X of This.R loop
+            Mark (This.Core, X);
+         end loop;
+         for X of This.Environment loop
+            Mark (This.Core, X);
+         end loop;
+         for X of Xs loop
+            Mark (This.Core, X);
+         end loop;
+
+         GC (This.Core);
+
+         After_GC (This.Core);
       end if;
-      Before_GC (This.Core);
-      for X of This.Internal loop
-         Mark (This.Core, X);
-      end loop;
-      for X of This.R loop
-         Mark (This.Core, X);
-      end loop;
-      for X of This.Environment loop
-         Mark (This.Core, X);
-      end loop;
-      for X of Xs loop
-         Mark (This.Core, X);
-      end loop;
-
-      GC (This.Core);
-
-      After_GC (This.Core);
 
       This.GC_Count := @ + 1;
-      This.GC_Time := @ + (Clock - Start);
    end GC;
 
    ----------------
