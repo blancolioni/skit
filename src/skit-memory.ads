@@ -36,7 +36,7 @@ private package Skit.Memory is
       Left   : Object;
       Right  : Object)
       return Object
-     with Pre => not Is_Full (This);
+     with Inline_Always, Pre => not Is_Full (This);
 
    procedure Initialize (This : in out Instance)
      with Post => not Is_Full (This);
