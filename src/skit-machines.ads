@@ -103,7 +103,8 @@ private
      with Inline_Always;
 
    procedure Push (Stack : in out Stack_Type;
-                   Value : Object);
+                   Value : Object)
+     with Inline_Always;
 
    type Internal_Stack is (Stack, Control, Secondary_Stack);
    type Internal_Stack_Array is array (Internal_Stack) of Stack_Type;
