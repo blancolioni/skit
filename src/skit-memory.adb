@@ -64,8 +64,6 @@ package body Skit.Memory is
    begin
       Flip (This);
       This.Copied := 0;
-      This.Static_Copied := 0;
-      This.Transient_Copied := 0;
    end Before_GC;
 
    ----------
@@ -189,11 +187,6 @@ package body Skit.Memory is
       begin
          if not In_To_Space (This, Cell.Left) then
             This.Copied := This.Copied + 1;
-            if Address < This.Static_Top then
-               This.Static_Copied := @ + 1;
-            else
-               This.Transient_Copied := @ + 1;
-            end if;
             Cell.Left :=
               (Copy (This, Address), Application_Object);
          end if;

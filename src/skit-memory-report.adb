@@ -14,9 +14,5 @@ begin
       & Natural'Image (This.Reclaimed));
    Ada.Text_IO.Put_Line
      ("Last copied cells:"
-      & This.Copied'Image
-      & " static:"
-      & This.Static_Copied'Image
-      & "; transient:"
-      & This.Transient_Copied'Image);
+      & This.Copied'Image);
 end Skit.Memory.Report;

@@ -83,12 +83,34 @@ private
 
    subtype Register is Positive range 1 .. 15;
 
-   type Internal_Register is (Stack, Control, Dump, Secondary_Stack);
-   type Internal_Register_Array is array (Internal_Register) of Object;
+   type Object_Array_Access is access Object_Array;
+   type Stack_Type is
+      record
+         Top : Natural := 0;
+         Max : Natural := 0;
+         Arr : Object_Array_Access;
+      end record;
+
+   function Top (Stack : Stack_Type) return Object
+   is (Stack.Arr (Stack.Top))
+     with Inline_Always;
+
+   function Is_Empty (Stack : Stack_Type) return Boolean
+   is (Stack.Top = 0)
+     with Inline_Always;
+
+   function Pop (Stack : in out Stack_Type) return Object
+     with Inline_Always;
+
+   procedure Push (Stack : in out Stack_Type;
+                   Value : Object);
+
+   type Internal_Stack is (Stack, Control, Secondary_Stack);
+   type Internal_Stack_Array is array (Internal_Stack) of Stack_Type;
 
    type Instance (Core_Size : Cell_Address) is tagged limited
       record
-         Internal          : Internal_Register_Array := [others => Nil];
+         Stacks            : Internal_Stack_Array;
          R                 : Object_Array (Register) := [others => Nil];
          Prims             : Primitive_Function_Vectors.Vector;
          Environment       : Environment_Maps.Map;

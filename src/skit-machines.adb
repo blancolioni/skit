@@ -1,5 +1,6 @@
 with Ada.Calendar;
 with Ada.Text_IO;
+with Ada.Unchecked_Deallocation;
 with Skit.Debug;
 with Skit.Memory.Report;
 
@@ -14,13 +15,13 @@ package body Skit.Machines is
 
    function Pop
      (This : in out Instance'Class;
-      From : Internal_Register)
+      From : Internal_Stack)
       return Object
      with Inline_Always;
 
    procedure Push
      (This  : in out Instance'Class;
-      To    : Internal_Register;
+      To    : Internal_Stack;
       Value : Object)
      with Inline_Always;
 
@@ -175,7 +176,7 @@ package body Skit.Machines is
       function Pop (Args : out Object_Array) return Boolean;
 
       function Top return Object
-      is (Skit.Memory.Left (This.Core, This.Internal (Control)));
+      is (Skit.Memory.Left (This.Core, Top (This.Stacks (Control))));
 
       function Is_Defined_Primitive
         (Payload : Object_Payload)
@@ -231,19 +232,19 @@ package body Skit.Machines is
          if Trace then
             Ada.Text_IO.Put_Line ("collecting result");
          end if;
-         while Is_App (This.Internal (Control)) loop
+         while not Is_Empty (This.Stacks (Control)) loop
             if Trace then
                Ada.Text_IO.Put_Line
                  ("apply: "
                   & This.Debug_Image
-                    (Right (Left (This.Internal (Control)))));
+                    (Right (Top (This.Stacks (Control)))));
             end if;
             This.Push (Right (This.Pop (Control)));
             This.Apply;
          end loop;
          if Trace then
             Ada.Text_IO.Put_Line
-              ("result: " & This.Debug_Image (Left (This.Internal (Stack))));
+              ("result: " & This.Debug_Image (Top (This.Stacks (Stack))));
          end if;
       end Collect_Result;
 
@@ -387,8 +388,7 @@ package body Skit.Machines is
             --  secondary stack.  Both stay reachable from the stack (q_N)
             --  until parked, so a collection during Apply cannot free them.
             declare
-               Pending : constant Object :=
-                           Skit.Memory.Left (This.Core, This.Internal (Stack));
+               Pending : constant Object := Top (This.Stacks (Stack));
             begin
                This.Push (Secondary_Stack, Right (Pending));
             end;
@@ -416,9 +416,7 @@ package body Skit.Machines is
       --  an indirection to the result.
 
       procedure Advance_Primitive is
-         Frame : constant Object :=
-                   Skit.Memory.Left
-                     (This.Core, This.Internal (Secondary_Stack));
+         Frame : constant Object := Top (This.Stacks (Secondary_Stack));
          --  Frame = App (Partial, Suspension); it remains on the secondary
          --  stack (a GC root) for the whole traversal, so every argument and
          --  the redex root stay reachable through it.
@@ -504,9 +502,9 @@ package body Skit.Machines is
 
       procedure Eval_Suspension is
          Top : constant Object :=
-                 (if Is_App (This.Internal (Secondary_Stack))
-                  then Left (This.Internal (Secondary_Stack))
-                  else Nil);
+                 (if Is_Empty (This.Stacks (Secondary_Stack))
+                  then Nil
+                  else Machines.Top (This.Stacks (Secondary_Stack)));
       begin
          if Is_App (Top) then
             if Right (Top) = Suspension then
@@ -525,16 +523,15 @@ package body Skit.Machines is
       ---------
 
       function Pop (Args : out Object_Array) return Boolean is
-         P : Object := This.Internal (Control);
+         C : Stack_Type renames This.Stacks (Control);
       begin
+         if C.Top < Args'Length then
+            return False;
+         end if;
+
          for Arg of Args loop
-            if P = Nil then
-               return False;
-            end if;
-            Arg := Skit.Memory.Left (This.Core, P);
-            P := Skit.Memory.Right (This.Core, P);
+            Arg := Pop (C);
          end loop;
-         This.Internal (Control) := P;
          return True;
       end Pop;
 
@@ -550,7 +547,7 @@ package body Skit.Machines is
                  ("push: " & This.Debug_Image (Right (It)));
             end if;
             This.Push (Control, It);
-            It := Skit.Memory.Left (This.Core, Top);
+            It := Top;
          end loop;
 
          if Trace then
@@ -611,8 +608,10 @@ package body Skit.Machines is
          Ada.Text_IO.Put_Line ("GC");
       end if;
       Before_GC (This.Core);
-      for X of This.Internal loop
-         Mark (This.Core, X);
+      for S of This.Stacks loop
+         for X of S.Arr (1 .. S.Top) loop
+            Mark (This.Core, X);
+         end loop;
       end loop;
       for X of This.R loop
          Mark (This.Core, X);
@@ -664,14 +663,10 @@ package body Skit.Machines is
    -- Pop --
    ---------
 
-   function Pop
-     (This : in out Instance'Class)
-      return Object
-   is
-      S : Object renames This.Internal (Stack);
+   function Pop (Stack : in out Stack_Type) return Object is
    begin
-      return X : constant Object := Skit.Memory.Left (This.Core, S) do
-         S := Skit.Memory.Right (This.Core, S);
+      return X : constant Object := Stack.Arr (Stack.Top) do
+         Stack.Top := @ - 1;
       end return;
    end Pop;
 
@@ -680,15 +675,24 @@ package body Skit.Machines is
    ---------
 
    function Pop
-     (This : in out Instance'Class;
-      From : Internal_Register)
+     (This : in out Instance'Class)
       return Object
    is
-      S : Object renames This.Internal (From);
    begin
-      return X : constant Object := Skit.Memory.Left (This.Core, S) do
-         S := Skit.Memory.Right (This.Core, S);
-      end return;
+      return Pop (This.Stacks (Stack));
+   end Pop;
+
+   ---------
+   -- Pop --
+   ---------
+
+   function Pop
+     (This : in out Instance'Class;
+      From : Internal_Stack)
+      return Object
+   is
+   begin
+      return Pop (This.Stacks (From));
    end Pop;
 
    -----------------
@@ -698,7 +702,7 @@ package body Skit.Machines is
    function Stack_Empty
      (This : Instance'Class)
       return Boolean
-   is (This.Internal (Stack) = Nil);
+   is (Is_Empty (This.Stacks (Stack)));
 
    ---------------
    -- Primitive --
@@ -716,17 +720,27 @@ package body Skit.Machines is
               Primitive_Object);
    end Primitive;
 
-   ----------
-   -- Push --
-   ----------
-
-   procedure Push
-     (This  : in out Instance'Class;
-      Value : Object)
+   procedure Push (Stack : in out Stack_Type;
+                   Value : Object)
    is
-      S : Object renames This.Internal (Stack);
    begin
-      S := This.Apply (Value, S);
+      if Stack.Arr = null then
+         Stack.Arr := new Object_Array (1 .. 4096);
+      elsif Stack.Top = Stack.Arr'Last then
+         declare
+            procedure Free is
+              new Ada.Unchecked_Deallocation
+                (Object_Array, Object_Array_Access);
+            Old_Stack : Object_Array_Access := Stack.Arr;
+         begin
+            Stack.Arr := new Object_Array (1 .. Old_Stack'Last * 2);
+            Stack.Arr (Old_Stack'Range) := Old_Stack.all;
+            Free (Old_Stack);
+         end;
+      end if;
+      Stack.Top := @ + 1;
+      Stack.Max := Natural'Max (Stack.Max, Stack.Top);
+      Stack.Arr (Stack.Top) := Value;
    end Push;
 
    ----------
@@ -735,12 +749,23 @@ package body Skit.Machines is
 
    procedure Push
      (This  : in out Instance'Class;
-      To    : Internal_Register;
       Value : Object)
    is
-      S : Object renames This.Internal (To);
    begin
-      S := This.Apply (Value, S);
+      Push (This.Stacks (Stack), Value);
+   end Push;
+
+   ----------
+   -- Push --
+   ----------
+
+   procedure Push
+     (This  : in out Instance'Class;
+      To    : Internal_Stack;
+      Value : Object)
+   is
+   begin
+      Push (This.Stacks (To), Value);
    end Push;
 
 end Skit.Machines;
