@@ -2,7 +2,6 @@ with Ada.Calendar;
 with Ada.Text_IO;
 with Ada.Unchecked_Deallocation;
 with Skit.Debug;
-with Skit.Memory.Report;
 
 package body Skit.Machines is
 
@@ -82,8 +81,6 @@ package body Skit.Machines is
             if Skit.Memory.Is_Full (This.Core) then
                raise Storage_Error with "out of memory";
             end if;
-
-            Skit.Memory.Report (This.Core);
 
             return Skit.Memory.Append (This.Core, Xs (1), Xs (2));
          end;
@@ -719,6 +716,10 @@ package body Skit.Machines is
               + Primitive_Function_Payload'First,
               Primitive_Object);
    end Primitive;
+
+   ----------
+   -- Push --
+   ----------
 
    procedure Push (Stack : in out Stack_Type;
                    Value : Object)
