@@ -632,9 +632,9 @@ package body Skit.Machines is
             use Ada.Calendar;
             Start : constant Time := Clock;
          begin
-            if Instrument then
-               Ada.Text_IO.Put_Line ("GC");
-            end if;
+            --  if Instrument then
+            --     Ada.Text_IO.Put_Line ("GC");
+            --  end if;
             Before_GC (This.Core);
             for X of This.Internal loop
                Mark (This.Core, X);
