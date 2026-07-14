@@ -1,10 +1,66 @@
 # ADR 0008: Generational Collection with a Non-Moving Static Region
 
-- **Status:** Accepted (2026-07-13) — implemented; the as-built collector scans
-  all static as roots rather than using a remembered set (see Decision).
-  Wall-clock verification pending.
+- **Status:** Rejected (2026-07-13) — implemented and measured; the premise was
+  a mismeasurement (see Outcome). The immortal set is ~1–5K cells, not ~99%, so
+  the static region saves almost nothing and cost ~5× on the GC-heavy case.
 - **Date:** 2026-07-13
 - **Deciders:** Fraser Wilson
+
+## Outcome (2026-07-13)
+
+Implemented (non-moving static region + nursery, scanning static as roots) and
+measured. **Rejected: the motivating premise was false.**
+
+The premise was "~99% of every collection's copy work is re-copying immortal
+cells." That figure came from classifying survivors as static by the
+**survived-the-previous-GC** watermark — which is a **GC-frequency artifact**
+(flagged earlier in this ADR's own Context, and in the ADR 0007 investigation:
+the ratio drifts with heap size). The **genuinely immortal set** — cells present
+for the whole run (install provenance) — is tiny:
+
+| workload | immortal cells | live / GC | GCs | GC time | collector |
+|----------|---------------|-----------|-----|---------|-----------|
+| `sum [1..10000]` | 928 | ~490K–970K | 444 / 1646 | 1.2 s / 19 s | two-space / generational |
+| `RunTests.hs` | 5033 | ~133K | 3 | 4 ms | generational |
+
+So the static region skips copying ~1–5K cells per collection — **~0.1% of the
+copy work on the GC-heavy workload, ~7% on the light one** — while the ~490K–970K
+actually copied is genuine, churning **live working set** that any copying
+collector must move. Generational cannot help because <0.2% of the live set is
+immortal.
+
+Measured cost of building it anyway:
+
+- **GC-heavy (`sum`): ~5× slower** — 4.3 s (two-space) → 23 s (generational),
+  from the reserved-but-empty static area shrinking the effective heap, the
+  per-GC static scan, and a ~2× live-set inflation that was never fully
+  explained (retention or timing) but did not need to be, given the premise was
+  already dead.
+- **GC-light (`RunTests`): neutral** — 20 ms, 3 collections; the collector is
+  simply not exercised, so the choice is invisible.
+
+### Why the premise looked true
+
+The `sum` working set (~490K live to sum a 10 000-element list) is not immortal —
+it is a large lazy structure that survives a collection or two, then dies. The
+survived-last-GC classifier counted it as "static," inflating the immortal
+figure ~500×. This is the second time the survived-last-GC measure misled the
+investigation; **install provenance is the honest measure of immortality**, and
+it says ~1–5K.
+
+### What is actually worth doing instead
+
+- The `sum` cost is a **working-set problem, not a GC-mechanism one**: ~490K live
+  cells to fold a 10K list means the evaluation is not streaming (lazy
+  thunk/dictionary buildup). Reducing the live working set (strictness, fusion in
+  the Prelude/front-end) helps *every* collector and is the real lever.
+- Keep the two-space copying collector.
+- Reopen a generational design only if a genuinely **resident-heavy** workload
+  (e.g. a long REPL session holding many loaded modules live) shows a large
+  install-provenance immortal count — measure that first.
+
+The from-space poisoning and heap-integrity check developed here are retained;
+they caught a real cached-pointer bug and are useful regardless of collector.
 
 ## Context
 
