@@ -184,7 +184,7 @@ package body Skit.Tests is
    begin
       Handle :=
         Skit.Handles.New_Handle
-          (Core_Size => 16384,
+          (Core_Size => 1024,
            Writer => Ada.Text_IO.Put'Access);
       Handle.Bind
         ("#eq",

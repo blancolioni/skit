@@ -49,6 +49,8 @@ package body Skit.Debug is
                   return "*undefined*";
                when Payload_Suspension =>
                   return "*suspend*";
+               when Payload_Invalid =>
+                  return "*invalid*";
                when Primitive_Variable_Payload =>
                   declare
                      Ch : constant Character :=
@@ -65,9 +67,8 @@ package body Skit.Debug is
                     & ">";
             end case;
          when Application_Object =>
-            return "("
-              & Ada.Strings.Fixed.Trim (X.Payload'Image, Ada.Strings.Left)
-              & ")";
+            return "@"
+              & Ada.Strings.Fixed.Trim (X.Payload'Image, Ada.Strings.Left);
       end case;
    end Image;
 

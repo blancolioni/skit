@@ -1,11 +1,12 @@
 with Ada.Calendar;
 with Ada.Text_IO;
 with Skit.Debug;
+with Skit.Memory.Report;
 
 package body Skit.Machines is
 
    Trace      : constant Boolean := False;
-   Instrument : constant Boolean := False;
+   Instrument : constant Boolean := True;
 
    function Apply
      (This        : in out Instance'Class;
@@ -42,11 +43,12 @@ package body Skit.Machines is
       return Object
    is
    begin
-      if Skit.Memory.Is_Full (This.Core) then
+      if Skit.Memory.Is_Static_Full (This.Core) then
+         Skit.Memory.Report (This.Core);
          raise Constraint_Error with
-           "machine memory overflow in Append";
+           "static memory overflow in Append";
       end if;
-      return Skit.Memory.Append (This.Core, Left, Right);
+      return Skit.Memory.Append_Static (This.Core, Left, Right);
    end Append;
 
    -----------
@@ -143,6 +145,10 @@ package body Skit.Machines is
          when Float_Object =>
             This.Push (X);
          when Primitive_Object =>
+            if X = Invalid then
+               raise Constraint_Error with
+                 "invalid found in evaluate";
+            end if;
             This.Push (X);
          when Application_Object =>
             if Trace then
@@ -475,9 +481,18 @@ package body Skit.Machines is
          --  Every argument is now on the stack; invoke the primitive.
          declare
             Prim    : constant Object := Left (Frame);
+            pragma Assert
+              (Prim.Tag = Primitive_Object,
+               "expected primitive object, found " & Debug.Image (Prim));
+            pragma Assert
+              (Prim.Payload in Primitive_Function_Payload,
+               "expected primitive function, found " & Debug.Image (Prim));
             P_Index : constant Natural :=
                         Natural (Prim.Payload
                                  - Primitive_Function_Payload'First);
+            pragma Assert
+              (P_Index <= This.Prims.Last_Index,
+               "invalid primitive: " & Debug.Image (Prim));
             Fn      : Primitive_Evaluator_Interface'Class
             renames This.Prims (P_Index);
          begin

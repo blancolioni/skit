@@ -85,6 +85,7 @@ private
    Payload_C_Prime    : constant Object_Payload := 8;
    Payload_Undefined  : constant Object_Payload := 9;
    Payload_Suspension : constant Object_Payload := 10;
+   Payload_Invalid    : constant Object_Payload := 11;
 
    subtype Combinator_Payload is
      Object_Payload range Payload_S .. Payload_C_Prime;
@@ -100,6 +101,7 @@ private
    C_Prime    : constant Object := (Payload_C_Prime, Primitive_Object);
    Undefined  : constant Object := (Payload_Undefined, Primitive_Object);
    Suspension : constant Object := (Payload_Suspension, Primitive_Object);
+   Invalid    : constant Object := (Payload_Invalid, Primitive_Object);
 
    subtype Primitive_Function_Payload is
      Object_Payload range 64 .. 4095;

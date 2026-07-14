@@ -12,6 +12,7 @@ begin
    --     return;
    --  end if;
 
+   Test ("ge 2 2 3 4", 3);
    Test ("K I", "K I");
    Test ("I 23", Skit.To_Object (23));
    Test ("K 42 666", Skit.To_Object (42));
@@ -92,4 +93,8 @@ begin
    Test ("eq #maxInt 536870911 1 0", 1);
    Test ("+ 0 #minInt", -536870912);
    Report;
+exception
+   when others =>
+      Report;
+      raise;
 end Skit_Tests;
