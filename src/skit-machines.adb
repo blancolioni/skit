@@ -449,7 +449,7 @@ package body Skit.Machines is
                declare
                   F_Index : constant Natural :=
                               Natural
-                                 (Walk.Payload
+                                 (Payload (Walk)
                                  - Primitive_Function_Payload'First);
                   Fn      : Primitive_Evaluator_Interface'Class
                   renames This.Prims (F_Index);
