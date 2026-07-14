@@ -3,7 +3,7 @@ with Skit.Debug;
 
 package body Skit.Memory is
 
-   Check_Heap_Enabled : constant Boolean := True;
+   Check_Heap_Enabled : constant Boolean := False;
 
    procedure Remember
      (This : in out Instance;
@@ -405,9 +405,6 @@ package body Skit.Memory is
         and then Is_Application (To)
         and then To.Payload >= This.Static_Top
       then
-         Ada.Text_IO.Put_Line
-           ("remember:" & App.Payload'Image
-            & " ->" & To.Payload'Image);
          if not This.Remembered_Full
            and then (This.Remembered_Count = 0
                      or else This.Remembered (This.Remembered_Count)

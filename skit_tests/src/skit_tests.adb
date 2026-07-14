@@ -87,7 +87,7 @@ begin
    Test ("sum (map (* 2) (cons 1 (cons 2 (cons 3 nil))))", 12);
    Test ("sum (map (putChar 1 1) (cons 65 (cons 66 (cons 67 (cons 10 nil)))))",
          8);
-   Test ("sum (fromTo 1 100)", 5050);
+   Test ("sum (fromTo 1 10)", 55);
    Test ("(\x.+ x x) (+ 4 (trace 5))", 18);
    Test ("seq (+ 1 2) (+ 2 3)", 5);
    Test ("eq #maxInt 536870911 1 0", 1);

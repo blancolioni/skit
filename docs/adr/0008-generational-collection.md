@@ -1,6 +1,8 @@
 # ADR 0008: Generational Collection with a Non-Moving Static Region
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-07-13) — implemented; the as-built collector scans
+  all static as roots rather than using a remembered set (see Decision).
+  Wall-clock verification pending.
 - **Date:** 2026-07-13
 - **Deciders:** Fraser Wilson
 
@@ -67,10 +69,9 @@ updates to a *survived* cell are rare.
   re-copy and a small, cache-hot nursery collected frequently becomes viable —
   potentially faster than the current 3396 ms floor, which the copying collector
   cannot get under.
-- **Half the infrastructure exists.** `Static_Top` (the static boundary),
-  the static/transient classification in `Move`, and the write-barrier hook are
-  already in the tree; what remains is making the static region non-moving and
-  turning the barrier counter into a real remembered set.
+- **Half the infrastructure exists.** `Static_Top` (the static boundary) and the
+  static/transient classification in `Move` are already in the tree; what remains
+  is making the static region non-moving and scanning it as roots.
 
 ## Options considered
 
@@ -80,26 +81,31 @@ Status quo. The sweep shows this tops out at ~3396 ms against a cache wall, with
 ~99% of collector effort wasted on re-copying immortals. Rejected as the
 endpoint.
 
-### B. Non-collected static region, scan it wholesale each GC
+### B. Non-moving static + write-barrier remembered set (tried, dropped)
 
-Segregate immortals; at each nursery collection scan the entire static region
-for old→young pointers instead of copying it. Scanning is cheaper than copying
-(read-only, no allocation) but still O(static) ≈ 490K per GC — only ~2×. Given
-the remembered-set measurement makes wholesale scanning unnecessary, rejected in
-favour of C.
+Record the ~15/epoch static cells that receive a young pointer; at collection
+visit only those, not all of static. Promised the copy-elimination at ~0.003%
+of the scan cost. **Implemented first, then dropped:** the remembered set cannot
+be cleared after a collection (a recorded static→young reference persists into
+the next epoch), and keeping it correct across promotion is more bookkeeping than
+the scan it avoids. See "Static scan (and why not a remembered set)". Viable
+later as a *promotion* trigger (see Future refinements), not as scan-avoidance.
 
-### C. Generational: non-moving static + nursery + write-barrier remembered set (proposed)
+### C. Non-moving static + nursery, scanning static as roots (chosen)
 
 Immortals live in a non-moving static region; only the nursery is collected;
-a write barrier records the ~15/epoch old→young pointers so a collection visits
-only those, not the whole static region. Captures ~99% of the copy saving with
-~0.003% overhead. Chosen.
+**static is never relocated.** Each collection scans the static region as an
+extra root source, forwarding any young pointer it holds. Copy/relocation volume
+drops ~99% (only transient is copied — ~490K → a few thousand), and static stays
+put and cache-warm across collections. The residual cost is an **O(static)
+read-only scan** per collection — cheaper than the read+write+allocate of copying
+it, but not the O(remembered) of Option B. Simple and correct; chosen.
 
 ## Decision
 
 Adopt Option **C**. Restructure the collector into a **non-moving static region
-plus a copied nursery**, with a **write barrier and remembered set** for
-old→young references.
+plus a copied nursery**. Each nursery collection **scans the whole static region
+as roots** to forward old→young pointers; static is never moved or copied.
 
 ### Heap layout
 
@@ -119,10 +125,10 @@ A nursery collection:
 
 1. Forward the machine roots (registers, environment, stacks — the existing root
    set) that point into the nursery.
-2. Forward the **remembered set** — the static cells recorded as holding a young
-   pointer this epoch. Scan only those, not all of static.
+2. **Scan the whole static region** `[0 .. Static_Top)` as roots, forwarding any
+   young pointer held by a static cell.
 3. Cheney-scan the nursery to-space, forwarding children.
-4. Static cells are neither moved nor scanned except via (2).
+4. Static cells are never moved or copied (only read in step 2).
 
 Cells that survive are **promoted (tenured) into the static region** by
 `Static_Top` advancing over them — the transient-copied count (1–6000/GC) is the
@@ -130,15 +136,38 @@ tenuring rate; static grows slowly. This reuses the existing meaning of
 `Static_Top` (the survived-a-collection boundary) — it becomes the static/nursery
 partition rather than a mere classification watermark.
 
-### Write barrier and remembered set
+### Static scan (and why not a remembered set)
 
-The instrumentation barrier becomes functional: when `Set_Left`/`Set_Right`
-stores a young application pointer into a static cell, record that static cell
-in a **remembered set** (a small array/set of `Cell_Address`; the measured size
-is ~15–20, so a fixed small buffer with overflow-to-scan fallback suffices). The
-set is consumed as roots in step (2) and cleared each collection (in
-`Before_GC`). Writes where both ends are static, or the target is young, are not
-recorded.
+A write barrier + remembered set (record the ~15/epoch static cells that receive
+a young pointer; visit only those in step 2) was implemented first — it promised
+the same ~99% copy saving at ~0.003% of the scan cost. It was **dropped because
+the set cannot be cleared after a collection.** A static cell recorded as
+pointing young still points young in the *next* epoch: the young target survived
+the collection and (unless promoted) is still a nursery cell, so the old→young
+reference persists across the GC boundary. Clearing the set loses that reference
+(→ the target is not forwarded next time → dangling); keeping it requires
+re-adding entries on promotion and reconciling moved targets — more bookkeeping
+than the scan it was meant to avoid.
+
+Scanning all of static each collection is simple and correct, and — crucially —
+static is **read, not copied**, so this recovers essentially all of the ~99%
+copy-volume win. The residual is an O(static) read-only scan per collection
+(sequential, cache-friendly) instead of an O(static) copy. The write-barrier
+*instrumentation* (the static←young write counter) is retained for measurement,
+not used to gate collection.
+
+### Implementation note: cached pointers across collection
+
+Implementing this surfaced a latent bug (caught by from-space poisoning). The
+primitive driver `Advance_Primitive` cached the parked frame in an Ada local
+across `Push` calls that can trigger a collection. A copying collection **moves**
+the frame (it survives via `Secondary_Stack`) but does not update the Ada local,
+which then dangles into the now-dead from-space. Fixed by holding the frame in a
+**GC-forwarded register** — the machine's dead `Dump` register, repurposed as
+`Frame` — so the collector updates its address in place (`Mark` is `X := Move`).
+General rule this establishes: in a copying collector, never cache a cell pointer
+in a local across an allocating call; keep it in a register/root the collector
+forwards, or re-read it afterwards.
 
 ### Identifying static
 
@@ -161,29 +190,53 @@ tenured garbage cannot accumulate unboundedly.
 ## Verification
 
 - **Correctness under GC stress:** full self-test and integration suites at a
-  deliberately tiny nursery to force frequent collections; the remembered set
-  and promotion must preserve every reachable cell.
-- **Remembered-set sizing holds:** confirm max/epoch stays small on other
-  workloads (not just `sum`), especially ones with more sharing/laziness; if it
-  grows large, revisit (fall back to Option B's wholesale scan for that regime).
+  deliberately tiny nursery to force frequent collections; every reachable cell
+  must be preserved. From-space poisoning (fill the dead semispace with an
+  illegal value after each collection) turns any missed forwarding into a loud,
+  localised fault — it is what caught the cached-frame bug above.
+- **Heap integrity check** (test builds): after each collection, scan all live
+  cells and assert every application pointer targets static or the active
+  nursery — never from-space, free space, or out of bounds.
 - **Wall-clock A/B** (standing rule since [ADR 0007](0007-array-backed-spine-stacks.md)):
   same-input timing before/after, across core sizes, including a small nursery to
-  test whether it beats the current 3396 ms floor.
+  test whether it beats the current 3396 ms floor. Not yet done.
 - **Major-collection safety valve** actually reclaims tenured garbage (a
   workload with long-but-mortal data).
 
+## Future refinements
+
+- **Promote static-referenced young cells into static.** Instead of tracking
+  old→young references (remembered set) or scanning all of static (as-built),
+  *eliminate* them: when a collection forwards a young cell reached from a static
+  cell, tenure it **into** the static region rather than to the nursery
+  to-space. Over time static becomes closed under references (static → static
+  only), and the static scan in step 2 can shrink or be dropped entirely. The
+  finding step is still needed the first time (scan or barrier), and it risks
+  over-tenuring short-lived lazy-update results, so it pairs with the
+  major-collection safety valve. This is where the dropped remembered set may
+  return — as a *promotion* trigger, not a scan-avoidance one.
+- **Remembered set as an optimisation over the scan**, if the static region
+  grows large enough that the O(static) read scan becomes significant — revisit
+  with the promotion scheme above to make clearing well-defined.
+
 ## Consequences
 
-To be recorded once implemented. Expected:
+Measured where noted; wall-clock pending.
 
-- Per-collection copy work falls ~99% (≈490K → transient + ~15 remembered);
-  the ~12% GC cost at realistic heap sizes largely disappears.
-- The heap-sizing cache wall is removed: a small, cache-hot nursery with frequent
-  cheap collections becomes the preferred configuration, and the non-moving
-  static graph stays cache-warm with stable addresses.
-- The collector gains a remembered set and a write barrier on the two setters —
-  a small, measured cost on the mutator's graph-update path.
-- A non-moving static region with stable addresses is also friendlier to a future
+- Per-collection copy work falls ~99% (static is scanned read-only, not copied);
+  each collection copies ~transient (1–6000 cells) instead of ~490K. The ~12% GC
+  cost at realistic heap sizes should largely disappear — to be confirmed by the
+  wall-clock A/B.
+- The heap-sizing cache wall should lift: a small, cache-hot nursery with frequent
+  cheap collections becomes viable, and the non-moving static graph stays
+  cache-warm with stable addresses.
+- The mutator gains no per-write barrier in the as-built design (the static←young
+  counter is instrumentation only); the collector gains an O(static) read scan
+  per collection.
+- A non-moving static region with stable addresses is friendlier to a future
   SPARK effort ([ADR 0004](0004-adopt-spark-for-the-memory-core.md)) than a
   fully-copying heap, and it retires the static-region follow-up parked in
   [ADR 0007](0007-array-backed-spine-stacks.md) by implementing it.
+- Established a general rule (from the cached-frame bug): in a copying collector,
+  never hold a cell pointer in a local across an allocating call — keep it in a
+  forwarded register/root or re-read it after.
