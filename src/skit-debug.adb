@@ -18,7 +18,7 @@ package body Skit.Debug is
 
    function Image (X : Object) return String is
    begin
-      case X.Tag is
+      case Tag (X) is
          when Integer_Object =>
             return Ada.Strings.Fixed.Trim
               (To_Integer (X)'Image, Ada.Strings.Left);
@@ -26,7 +26,7 @@ package body Skit.Debug is
             return Ada.Strings.Fixed.Trim
               (To_Float (X)'Image, Ada.Strings.Left);
          when Primitive_Object =>
-            case X.Payload is
+            case Payload (X) is
                when Payload_Nil =>
                   return "nil";
                when Payload_S =>
@@ -53,7 +53,7 @@ package body Skit.Debug is
                   declare
                      Ch : constant Character :=
                             Character'Val
-                              (X.Payload - Primitive_Variable_Payload'First
+                              (Payload (X) - Primitive_Variable_Payload'First
                                + Character'Pos ('a'));
                   begin
                      return [Ch];
@@ -61,12 +61,12 @@ package body Skit.Debug is
                when others =>
                   return "<"
                     & Ada.Strings.Fixed.Trim
-                    (X.Payload'Image, Ada.Strings.Left)
+                    (Payload (X)'Image, Ada.Strings.Left)
                     & ">";
             end case;
          when Application_Object =>
             return "("
-              & Ada.Strings.Fixed.Trim (X.Payload'Image, Ada.Strings.Left)
+              & Ada.Strings.Fixed.Trim (Payload (X)'Image, Ada.Strings.Left)
               & ")";
       end case;
    end Image;
@@ -93,20 +93,20 @@ package body Skit.Debug is
 
       function Img (X : Object) return String is
       begin
-         if X.Tag = Application_Object then
+         if Tag (X) = Application_Object then
             declare
                Left_Img  : constant String := Img (Left (Core, X));
                Right_Img : constant String := Img (Right (Core, X));
             begin
-               if Right (Core, X).Tag = Application_Object then
+               if Is_Application (Right (Core, X)) then
                   return Left_Img & " (" & Right_Img & ")";
                else
                   return Left_Img & " " & Right_Img;
                end if;
             end;
          elsif False
-           and then X.Tag = Primitive_Object
-           and then X.Payload in Primitive_Variable_Payload
+           and then Tag (X) = Primitive_Object
+           and then Payload (X) in Primitive_Variable_Payload
          then
             for Binding of Vrbs loop
                if Binding.V = X then

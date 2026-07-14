@@ -1,11 +1,18 @@
 package Skit is
 
-   Word_Size    : constant := 32;
-   Tag_Size     : constant := 2;
-   Payload_Size : constant := Word_Size - Tag_Size;
+   --  NaN-boxing prototype (ADR 0001, option C). Object is a 64-bit word:
+   --  a genuine IEEE-754 double is stored raw; every non-float value lives in
+   --  the reserved negative-quiet-NaN pattern space. See the private part for
+   --  the encoding and Skit body for the conversions.
 
-   Max_Integer : constant := 2 ** (Payload_Size - 1) - 1;
-   Min_Integer : constant := -2 ** (Payload_Size - 1);
+   Word_Size : constant := 64;
+
+   --  The box payload is 48 bits, but integer values round-trip through Ada's
+   --  32-bit Standard.Integer, so the language integer range stays 32-bit.
+   Integer_Bits : constant := 48;
+
+   Max_Integer : constant := 2 ** 31 - 1;
+   Min_Integer : constant := -2 ** 31;
 
    type Object is private;
    type Object_Array is array (Positive range <>) of Object;
@@ -58,8 +65,34 @@ package Skit is
 
 private
 
-   type Object_Payload is mod 2 ** Payload_Size;
+   --  ------------------------------------------------------------------
+   --  NaN-box encoding
+   --
+   --  A 64-bit IEEE-754 double is a "box" (a tagged non-float value) iff
+   --  sign = 1, exponent = all-ones and the quiet bit (mantissa bit 51) = 1
+   --  -- i.e. a negative quiet NaN, top 13 bits = 0x1FFF. That leaves 51
+   --  free low bits: 2 for a tag (bits 49..48) and 48 for a payload.
+   --
+   --    tag 0 = Integer   tag 1 = Primitive
+   --    tag 2 = Application   tag 3 = Float (the single reserved NaN)
+   --
+   --  Any word NOT matching the box pattern is a genuine double (finite,
+   --  +/-inf, +NaN, -inf, -sNaN all keep quiet bit 0 or sign 0). A double
+   --  that IS a negative quiet NaN (e.g. the x86 0.0/0.0 result) would alias
+   --  the box space, so To_Object canonicalises every float NaN to the tag-3
+   --  box; To_Float turns that box back into a real NaN.
+   --  ------------------------------------------------------------------
+
+   type Object is mod 2 ** 64
+     with Default_Value => 16#FFF9_0000_0000_0000#;  --  = Nil (Primitive 0)
+
+   type Object_Payload is mod 2 ** Integer_Bits;
    subtype Cell_Address is Object_Payload;
+
+   Box_Sig      : constant Object := 16#FFF8_0000_0000_0000#;
+   Box_Mask     : constant Object := 16#FFF8_0000_0000_0000#;
+   Payload_Mask : constant Object := 16#0000_FFFF_FFFF_FFFF#;
+   Two_48       : constant Object := 2 ** 48;
 
    type Object_Tag is
      (Integer_Object,
@@ -67,12 +100,33 @@ private
       Application_Object,
       Float_Object);
 
-   type Object is
-      record
-         Payload : Object_Payload := 0;
-         Tag     : Object_Tag     := Primitive_Object;
-      end record
-     with Pack, Size => 32;
+   function Is_Boxed (O : Object) return Boolean
+   is ((O and Box_Mask) = Box_Sig);
+
+   function Tag (O : Object) return Object_Tag
+   is (if not Is_Boxed (O) then Float_Object
+       elsif (O / Two_48) mod 4 = 0 then Integer_Object
+       elsif (O / Two_48) mod 4 = 1 then Primitive_Object
+       elsif (O / Two_48) mod 4 = 2 then Application_Object
+       else Float_Object);
+
+   function Payload (O : Object) return Object_Payload
+   is (Object_Payload (O and Payload_Mask));
+
+   function Address (O : Object) return Cell_Address
+   is (Cell_Address (Payload (O)));
+
+   function Box (Code : Object; Value : Object_Payload) return Object
+   is (Box_Sig or (Code * Two_48) or (Object (Value) and Payload_Mask));
+
+   function Make_Integer (Value : Object_Payload) return Object
+   is (Box (0, Value));
+
+   function Make_Primitive (Value : Object_Payload) return Object
+   is (Box (1, Value));
+
+   function Make_Application (Addr : Cell_Address) return Object
+   is (Box (2, Object_Payload (Addr)));
 
    Payload_Nil        : constant Object_Payload := 0;
    Payload_S          : constant Object_Payload := 1;
@@ -89,17 +143,20 @@ private
    subtype Combinator_Payload is
      Object_Payload range Payload_S .. Payload_C_Prime;
 
-   Nil        : constant Object := (Payload_Nil, Primitive_Object);
-   S          : constant Object := (Payload_S, Primitive_Object);
-   K          : constant Object := (Payload_K, Primitive_Object);
-   I          : constant Object := (Payload_I, Primitive_Object);
-   C          : constant Object := (Payload_C, Primitive_Object);
-   B          : constant Object := (Payload_B, Primitive_Object);
-   S_Prime    : constant Object := (Payload_S_Prime, Primitive_Object);
-   B_Star     : constant Object := (Payload_B_Star, Primitive_Object);
-   C_Prime    : constant Object := (Payload_C_Prime, Primitive_Object);
-   Undefined  : constant Object := (Payload_Undefined, Primitive_Object);
-   Suspension : constant Object := (Payload_Suspension, Primitive_Object);
+   Nil        : constant Object := Make_Primitive (Payload_Nil);
+   S          : constant Object := Make_Primitive (Payload_S);
+   K          : constant Object := Make_Primitive (Payload_K);
+   I          : constant Object := Make_Primitive (Payload_I);
+   C          : constant Object := Make_Primitive (Payload_C);
+   B          : constant Object := Make_Primitive (Payload_B);
+   S_Prime    : constant Object := Make_Primitive (Payload_S_Prime);
+   B_Star     : constant Object := Make_Primitive (Payload_B_Star);
+   C_Prime    : constant Object := Make_Primitive (Payload_C_Prime);
+   Undefined  : constant Object := Make_Primitive (Payload_Undefined);
+   Suspension : constant Object := Make_Primitive (Payload_Suspension);
+
+   --  Canonical box for a genuine float NaN (tag 3).
+   Float_NaN  : constant Object := Box (3, 0);
 
    subtype Primitive_Function_Payload is
      Object_Payload range 64 .. 4095;
@@ -108,24 +165,24 @@ private
      Object_Payload range 4096 .. 65535;
 
    function Is_Integer (X : Object) return Boolean
-   is (X.Tag = Integer_Object);
+   is (Tag (X) = Integer_Object);
 
    function Is_Float (X : Object) return Boolean
-   is (X.Tag = Float_Object);
+   is (Tag (X) = Float_Object);
 
    function To_Variable_Object (Index : Variable_Index) return Object
-   is (Object_Payload (Index) + Primitive_Variable_Payload'First,
-       Primitive_Object);
+   is (Make_Primitive
+         (Object_Payload (Index) + Primitive_Variable_Payload'First));
 
    function Is_Primitive (O : Object) return Boolean
-   is (O.Tag = Primitive_Object);
+   is (Tag (O) = Primitive_Object);
 
    function Is_Application (X : Object) return Boolean
-   is (X.Tag = Application_Object);
+   is (Tag (X) = Application_Object);
 
    function Is_Symbol (X : Object) return Boolean
-   is (X.Tag = Primitive_Object
-       and then X.Payload in Primitive_Variable_Payload);
+   is (Is_Primitive (X)
+       and then Payload (X) in Primitive_Variable_Payload);
 
    function Is_Undefined (X : Object) return Boolean
    is (X = Undefined);

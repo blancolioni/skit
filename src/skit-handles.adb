@@ -245,9 +245,9 @@ package body Skit.Handles is
       else
          This.H.Vector.Append (Name);
          return Symbol : constant Object :=
-           (Object_Payload (This.H.Vector.Last_Index)
-            + Primitive_Variable_Payload'First,
-            Primitive_Object)
+           Make_Primitive
+             (Object_Payload (This.H.Vector.Last_Index)
+              + Primitive_Variable_Payload'First)
          do
             This.H.Map.Insert (Name, Symbol);
          end return;

@@ -1,6 +1,9 @@
 # ADR 0001: Skit Object Representation
 
-- **Status:** Investigating
+- **Status:** Accepted (2026-07-14) — option C (NaN-boxed 64-bit) prototyped
+  and measured; cost is the predicted bounded ~2× memory with a modest
+  (1.1–1.34×) wall-clock hit, no pathology. Realising the float-correctness
+  prize additionally requires fixing front-end float lowering (see Consequences).
 - **Date:** 2026-07-04
 - **Deciders:** Fraser Wilson
 
@@ -86,23 +89,75 @@ with the box space.
   is 8-byte-word based on 64-bit hosts). The current 32-bit cell is the unusual
   choice; 2× memory is normal sizing, not exotic.
 
-## Leaning
+## Decision
 
-Option **C (NaN-boxed 64-bit)**, subject to validating the cost.
+Option **C (NaN-boxed 64-bit)**. The cost was the only open risk; the prototype
+measured it as acceptable (see Consequences).
 
-## Open questions
+## Open questions — resolved by the prototype
 
-- Measure the real 2× memory / cache impact on representative workloads before
-  committing.
-- Represent Haskell `Float` (32-bit) and `Double` (64-bit) as distinct types,
-  or promote everything to `Double` internally?
-- Confirm bit-pattern preservation across the GNAT `Long_Float` code paths
-  actually used (moves vs. any incidental arithmetic).
-- Tag-bit layout within the NaN payload; choice of the reserved canonical NaN.
+- **Real 2× memory / cache impact.** Measured (see Consequences): equal-cell-count
+  A/B shows 1.11–1.34× wall-clock, worse the more GC-bound the run, consistent
+  with a copy-GC-bandwidth cost. No cache cliff or pathological regime.
+- **`Float` vs `Double`.** Promote everything to `Double` internally. The
+  front-end already carries 64-bit literals (`Const_Float` is `Long_Float`);
+  only the old 30-bit word truncated them. One `Float_Object` tag suffices, so
+  the prototype keeps a single reserved NaN and no distinct 32-bit float type.
+- **Bit-pattern preservation.** Confirmed safe: the machine core never does FP
+  on Object words — `Evaluate` pushes floats inert, and arithmetic is isolated
+  in primitives via a `To_Float`/`To_Object` round-trip. The hot path only
+  *moves* floats (Push/Pop/Copy/GC), and moves preserve bit patterns, so sNaN
+  quieting cannot corrupt a boxed payload in the collector.
+- **Tag-bit layout.** A word is a box iff sign = 1, exponent = all-ones and the
+  quiet bit (mantissa bit 51) is set — a negative quiet NaN, top 13 bits
+  `0x1FFF`. That leaves bits 49..48 for a 2-bit tag (0 Integer, 1 Primitive,
+  2 Application, 3 Float) and bits 47..0 for a 48-bit payload. The single tag-3
+  value is the reserved canonical NaN; `To_Object` folds every float NaN
+  (including the x86 `0.0/0.0` result, which would alias the box pattern) into
+  it, and `To_Float` turns it back into a real NaN.
 
 ## Consequences
 
-To be recorded once a decision is reached. The public interface in
-[skit.ads](../../src/skit.ads) (`To_Object`, `Is_Integer`, `To_Integer`,
-`Is_Application`, `To_Variable_Object`) is intended to remain stable so callers
-are unaffected regardless of the chosen representation.
+Option C was implemented as a prototype on branch
+`7-evaluate-nan-boxing-to-store-values` and measured against the committed
+32-bit representation.
+
+- **Representation.** `Object` is a 64-bit word (`mod 2**64`). The public
+  interface in [skit.ads](../../src/skit.ads) (`To_Object`, `Is_Integer`,
+  `To_Integer`, `Is_Application`, `To_Variable_Object`) is unchanged, so
+  Leander callers were unaffected; the record's `.Tag`/`.Payload` component
+  reads became `Tag (X)`/`Payload (X)` accessors and aggregate construction
+  became `Make_Integer`/`Make_Primitive`/`Make_Application` constructors across
+  the Skit body and its children.
+- **Correctness.** Full self-test passes (138/138). Under GC stress (a tiny
+  nursery forcing hundreds of collections, with the ADR 0008 heap-integrity
+  checks and from-space poisoning enabled) the collector is clean with 16-byte
+  cells and NaN-boxed pointers. Both representations report identical GC counts
+  and allocation counts on the same input — behavioural parity.
+- **Cost (measured).** `sum [1..4000]`, min of 3 runs, equal cell count:
+
+  | core (cells) | 32-bit baseline | 64-bit NaN-box | ratio | GCs |
+  |--------------|-----------------|----------------|-------|-----|
+  | 512 K | 1.90 s | 2.54 s | 1.34× | 456 |
+  | 2048 K | 1.26 s | 1.40 s | 1.11× | 58 |
+
+  Memory is 2× per cell by construction (8→16 bytes). The wall-clock hit scales
+  with collection frequency, confirming the cost is copy-GC bandwidth, not a
+  cache wall. This is the predicted bounded cost, far from the ~5× that the
+  ADR 0008 generational experiment cost.
+- **Float precision — prize not yet realised end-to-end.** The representation
+  is lossless for `Double` by construction (raw reinterpret), but it cannot be
+  demonstrated through the evaluator yet: the front-end coerces every float
+  literal to `Integer` at
+  [leander-core-literals.adb:98](../../../src/leander-core-literals.adb)
+  (`Number (Integer (Float'Value (Image)))`), so doubles never reach Skit.
+  Fixing that lowering is a prerequisite to gaining the correctness benefit and
+  is tracked separately.
+- **Integers widened 30→32-bit** as a side effect (the box payload is 48-bit;
+  values round-trip through Ada's 32-bit `Standard.Integer`).
+- **Validity checking.** `-gnatVa` treats a NaN `Long_Float` as invalid data,
+  so `pragma Suppress (Validity_Check)` is applied within the `Skit` body only,
+  where the float reinterpret paths live — the modular `Object` word has no
+  invalid patterns, so validity checking is vacuous there regardless.
+- **Instrumentation note.** On Windows `Ada.Calendar` reports GC time as 0 ms
+  at this resolution; wall-clock (`time`) was used for the A/B above.

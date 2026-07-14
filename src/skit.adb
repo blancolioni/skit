@@ -2,20 +2,31 @@ with Ada.Unchecked_Conversion;
 
 package body Skit is
 
-   type Transfer_Word is mod 2 ** Integer'Size;
+   --  NaN-boxing reinterprets bit patterns as Long_Float, including genuine
+   --  NaNs. Under -gnatVa a NaN reads as "invalid data" and raises, so the
+   --  validity check is meaningless for the reinterpret paths here (ADR 0001
+   --  flags exactly this). Suppress it within this body only.
+   pragma Suppress (Validity_Check);
 
-   function To_Integer_Word is
-     new Ada.Unchecked_Conversion (Integer, Transfer_Word);
+   --  Object and Long_Float are both 64-bit; NaN-boxing reinterprets the bits.
+   function To_Bits is
+     new Ada.Unchecked_Conversion (Long_Float, Object);
 
-   function To_Float_Word is
-     new Ada.Unchecked_Conversion (Float, Transfer_Word);
+   function To_Double is
+     new Ada.Unchecked_Conversion (Object, Long_Float);
 
-   function To_Integer
-   is new Ada.Unchecked_Conversion (Transfer_Word, Integer)
-     with Unreferenced;
+   function To_Bits is
+     new Ada.Unchecked_Conversion (Long_Long_Integer, Object);
 
-   function To_Float
-   is new Ada.Unchecked_Conversion (Transfer_Word, Float);
+   function To_Signed is
+     new Ada.Unchecked_Conversion (Object, Long_Long_Integer);
+
+   Sign_Extend : constant Object := 16#FFFF_0000_0000_0000#;
+   Sign_Bit    : constant Object := 2 ** (Integer_Bits - 1);
+
+   --  A positive quiet NaN: the value To_Float hands back for the canonical
+   --  Float box, and never itself a box (sign bit clear).
+   NaN_Value : constant Long_Float := To_Double (16#7FF8_0000_0000_0000#);
 
    --------------
    -- To_Float --
@@ -23,7 +34,11 @@ package body Skit is
 
    function To_Float (X : Object) return Long_Float is
    begin
-      return Long_Float (To_Float (Transfer_Word (X.Payload) * 4));
+      if Is_Boxed (X) then
+         return NaN_Value;   --  the canonical Float_NaN box
+      else
+         return To_Double (X);
+      end if;
    end To_Float;
 
    ----------------
@@ -31,13 +46,12 @@ package body Skit is
    ----------------
 
    function To_Integer (X : Object) return Integer is
-      W : constant Transfer_Word := Transfer_Word (X.Payload);
+      Bits : Object := X and Payload_Mask;
    begin
-      if W < 2 ** (Payload_Size - 1) then
-         return Integer (X.Payload);
-      else
-         return -Integer (2 ** Payload_Size - W);
+      if (Bits and Sign_Bit) /= 0 then
+         Bits := Bits or Sign_Extend;
       end if;
+      return Integer (To_Signed (Bits));
    end To_Integer;
 
    ---------------
@@ -45,9 +59,9 @@ package body Skit is
    ---------------
 
    function To_Object (X : Integer) return Object is
-      W : constant Transfer_Word := To_Integer_Word (X);
+      Bits : constant Object := To_Bits (Long_Long_Integer (X));
    begin
-      return (Object_Payload (W and (2 ** Payload_Size - 1)), Integer_Object);
+      return Make_Integer (Object_Payload (Bits and Payload_Mask));
    end To_Object;
 
    ---------------
@@ -55,9 +69,8 @@ package body Skit is
    ---------------
 
    function To_Object (X : Float) return Object is
-      W : constant Transfer_Word := To_Float_Word (X);
    begin
-      return (Object_Payload (W / 4), Float_Object);
+      return To_Object (Long_Float (X));
    end To_Object;
 
    ---------------
@@ -65,8 +78,16 @@ package body Skit is
    ---------------
 
    function To_Object (X : Long_Float) return Object is
+      Bits : constant Object := To_Bits (X);
    begin
-      return To_Object (Float (X));
+      --  A double that lands in the box pattern is a negative quiet NaN;
+      --  fold it to the single canonical Float box so it cannot alias a
+      --  tagged value.
+      if (Bits and Box_Mask) = Box_Sig then
+         return Float_NaN;
+      else
+         return Bits;
+      end if;
    end To_Object;
 
 end Skit;
