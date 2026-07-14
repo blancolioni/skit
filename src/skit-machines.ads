@@ -81,15 +81,22 @@ private
         Element_Type => Object,
         "<"          => "<");
 
-   subtype Register is Positive range 1 .. 15;
+   subtype Register is Positive range 1 .. 4;
+   --  Shared, temporally, between Eval_Combinator argument slots (R (1 ..
+   --  Arg_Count), Arg_Count <= 4) and Advance_Primitive's frame/partial
+   --  (R (1), R (2)).  Safe because the two never run concurrently -- see the
+   --  Advancing_Primitive assertion in Eval_Combinator.
 
-   type Internal_Register is (Stack, Control, Dump, Secondary_Stack);
+   type Internal_Register is (Stack, Control, Secondary_Stack);
    type Internal_Register_Array is array (Internal_Register) of Object;
 
    type Instance (Core_Size : Cell_Address) is tagged limited
       record
          Internal          : Internal_Register_Array := [others => Nil];
          R                 : Object_Array (Register) := [others => Nil];
+         Advancing_Primitive : Boolean := False;
+         --  True only while Advance_Primitive is on the call stack; asserted
+         --  False by Eval_Combinator so the two cannot clobber the shared R.
          Prims             : Primitive_Function_Vectors.Vector;
          Environment       : Environment_Maps.Map;
          Alloc_Count       : Natural := 0;

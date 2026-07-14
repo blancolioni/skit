@@ -288,6 +288,10 @@ package body Skit.Machines is
 
       begin
 
+         pragma Assert
+           (not This.Advancing_Primitive,
+            "combinator evaluated while Advance_Primitive is active");
+
          if Pop (X) then
             Changed := True;
             case Combinator is
@@ -417,57 +421,58 @@ package body Skit.Machines is
       --  an indirection to the result.
 
       procedure Advance_Primitive is
-         Frame : constant Object :=
-                   Skit.Memory.Left
+         Frame : Object renames This.R (1);
+         Partial : Object renames This.R (2);
+      begin
+         This.Advancing_Primitive := True;
+         Frame := Skit.Memory.Left
                      (This.Core, This.Internal (Secondary_Stack));
          --  Frame = App (Partial, Suspension); it remains on the secondary
          --  stack (a GC root) for the whole traversal, so every argument and
          --  the redex root stay reachable through it.
-      begin
+
          loop
+            Partial := Left (Frame);
+            exit when not Is_App (Partial);   --  bare primitive: go call
+
             declare
-               Partial : constant Object := Left (Frame);
+               Arg   : constant Object := Right (Right (Partial));  -- arg_j
+               Index : Natural := 0;
+               Walk  : Object  := Partial;
             begin
-               exit when not Is_App (Partial);   --  bare primitive: go call
+               --  Position of this argument = number of App wrappers left.
+               while Is_App (Walk) loop
+                  Index := Index + 1;
+                  Walk  := Left (Walk);
+               end loop;
 
                declare
-                  Arg   : constant Object := Right (Right (Partial));  -- arg_j
-                  Index : Natural := 0;
-                  Walk  : Object  := Partial;
+                  F_Index : constant Natural :=
+                              Natural
+                                 (Walk.Payload
+                                 - Primitive_Function_Payload'First);
+                  Fn      : Primitive_Evaluator_Interface'Class
+                  renames This.Prims (F_Index);
                begin
-                  --  Position of this argument = number of App wrappers left.
-                  while Is_App (Walk) loop
-                     Index := Index + 1;
-                     Walk  := Left (Walk);
-                  end loop;
-
-                  declare
-                     F_Index : constant Natural :=
-                                 Natural
-                                   (Payload (Walk)
-                                    - Primitive_Function_Payload'First);
-                     Fn      : Primitive_Evaluator_Interface'Class
-                     renames This.Prims (F_Index);
-                  begin
-                     case Fn.Argument_Modes (Index) is
-                        when Lazy =>
-                           --  Lazy: pass the thunk unevaluated, then advance.
-                           --  Push before mutating Frame so Arg stays
-                           --  reachable through Frame across any collection
-                           --  in Push.
-                           This.Push (Arg);
-                           Skit.Memory.Set_Left
-                             (This.Core, Frame, Left (Partial));
-                        when Strict =>
-                           --  Strict: force the argument.  Push it onto
-                           --  Control (a GC root) first, then advance Frame.
-                           This.Push (Control, Arg);
-                           Skit.Memory.Set_Left
-                             (This.Core, Frame, Left (Partial));
-                           Changed := True;
-                           return;
-                     end case;
-                  end;
+                  case Fn.Argument_Modes (Index) is
+                     when Lazy =>
+                        --  Lazy: pass the thunk unevaluated, then advance.
+                        --  Push before mutating Frame so Arg stays
+                        --  reachable through Frame across any collection
+                        --  in Push.
+                        This.Push (Arg);
+                        Skit.Memory.Set_Left
+                           (This.Core, Frame, Left (Partial));
+                     when Strict =>
+                        --  Strict: force the argument.  Push it onto
+                        --  Control (a GC root) first, then advance Frame.
+                        This.Push (Control, Arg);
+                        Skit.Memory.Set_Left
+                           (This.Core, Frame, Left (Partial));
+                        Changed := True;
+                        This.Advancing_Primitive := False;
+                        return;
+                  end case;
                end;
             end;
          end loop;
@@ -496,6 +501,7 @@ package body Skit.Machines is
          end;
 
          Changed := True;
+         This.Advancing_Primitive := False;
 
       end Advance_Primitive;
 
