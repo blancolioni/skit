@@ -177,8 +177,14 @@ private
    function Is_Primitive (O : Object) return Boolean
    is (Tag (O) = Primitive_Object);
 
+   --  top 16: sig+quiet+tag
+   App_Mask : constant Object := 16#FFFF_0000_0000_0000#;
+
+   --  box sig | tag 2
+   App_Sig  : constant Object := 16#FFFA_0000_0000_0000#;
+
    function Is_Application (X : Object) return Boolean
-   is (Tag (X) = Application_Object);
+   is ((X and App_Mask) = App_Sig);
 
    function Is_Symbol (X : Object) return Boolean
    is (Is_Primitive (X)
