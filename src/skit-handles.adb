@@ -149,7 +149,7 @@ package body Skit.Handles is
       return Handle
    is
       H : constant Handle_Access :=
-            new Handle_Record (Cell_Address (Core_Size - 1));
+            new Handle_Record (Cell_Address (Core_Size * 2 - 1));
    begin
       H.Writer := Writer;
       H.Machine.Initialize;

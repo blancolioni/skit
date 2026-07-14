@@ -143,7 +143,7 @@ package body Skit.Memory is
             New_Count : Natural := 0;
             Overflow  : Boolean := False;
          begin
-            for A in 0 .. This.Static_Top - 1 loop
+            for A in 0 .. This.Static_Free - 1 loop
                This.Core (A).Left  := Move (This, This.Core (A).Left);
                This.Core (A).Right := Move (This, This.Core (A).Right);
                if Points_Young (This.Core (A).Left)
