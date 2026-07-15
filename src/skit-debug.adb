@@ -1,5 +1,6 @@
 with Ada.Strings.Fixed;
 with Ada.Containers.Indefinite_Doubly_Linked_Lists;
+with Ada.Containers.Ordered_Sets;
 
 package body Skit.Debug is
 
@@ -87,6 +88,11 @@ package body Skit.Debug is
       Vrbs : Variable_Binding_Lists.List;
       Xs   : constant String := "xyzuvwijkabcdefghlmnopqrst";
 
+      package Payload_Sets is
+        new Ada.Containers.Ordered_Sets (Object_Payload);
+
+      Visited_Set : Payload_Sets.Set;
+
       function Img (X : Object) return String;
 
       ---------
@@ -96,6 +102,10 @@ package body Skit.Debug is
       function Img (X : Object) return String is
       begin
          if X.Tag = Application_Object then
+            if Visited_Set.Contains (X.Payload) then
+               return "[recursive]";
+            end if;
+            Visited_Set.Include (X.Payload);
             declare
                Left_Img  : constant String := Img (Left (Core, X));
                Right_Img : constant String := Img (Right (Core, X));
