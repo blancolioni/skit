@@ -45,6 +45,8 @@ package body Skit.Debug is
                   return "B*";
                when Payload_C_Prime =>
                   return "C'";
+               when Payload_Y =>
+                  return "Y";
                when Payload_Undefined =>
                   return "*undefined*";
                when Payload_Suspension =>
