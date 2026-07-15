@@ -376,9 +376,24 @@ package body Skit.Machines is
             end case;
 
             It := This.Pop;
-            Set_Left (This.Core, X (Arg_Count), Skit.I);
-            Set_Right (This.Core, X (Arg_Count), It);
-            This.Push (Control, It);
+            if It.Tag = Application_Object
+              and then Combinator not in Payload_I | Payload_K
+            then
+               --  S, B, C, S', B*, C' build a fresh top node unique to this
+               --  redex, so overwrite the root with its contents directly
+               --  rather than an App (I, It) indirection.  This avoids the
+               --  identity-indirection chains that otherwise accumulate one
+               --  cell per reduction and leak O(n) space.  I and K return an
+               --  existing (possibly shared) argument, so they must keep the
+               --  indirection to preserve sharing under later updates.
+               Set_Left (This.Core, X (Arg_Count), Left (It));
+               Set_Right (This.Core, X (Arg_Count), Right (It));
+               This.Push (Control, X (Arg_Count));
+            else
+               Set_Left (This.Core, X (Arg_Count), Skit.I);
+               Set_Right (This.Core, X (Arg_Count), It);
+               This.Push (Control, It);
+            end if;
          end if;
 
       end Eval_Combinator;
