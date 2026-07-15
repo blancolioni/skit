@@ -161,3 +161,44 @@ Option C was implemented as a prototype on branch
   invalid patterns, so validity checking is vacuous there regardless.
 - **Instrumentation note.** On Windows `Ada.Calendar` reports GC time as 0 ms
   at this resolution; wall-clock (`time`) was used for the A/B above.
+
+## Update (2026-07-15): recursion fix re-characterises the cost
+
+The A/B cost table above was measured **before** the fixpoint-sharing fix, in the
+O(n²) recursion regime — note the collection counts (456 GCs for `sum [1..4000]`
+at 512 K cells). Recursion compiled to the pure combinator `Y = S S I (C B
+(S I I))`, which rebuilds the `Y f` subgraph on every unfold instead of sharing
+it, so any linear traversal re-reduced quadratically and allocated a torrent of
+transient cells. `Y` is now a built-in knot-tying combinator (see
+`Skit.Machines.Eval_Combinator`): it rewrites the redex root `App (Y, f)` in
+place to a self-referential `App (f, self)`, so the recursive value is one shared
+node. Traversal is now linear; `sum [1..5000]` fell from 269 GCs / 83 M allocated
+cells to **16 GCs / 7.6 M cells**, and the live set is small and roughly
+constant.
+
+This does not change the decision (float correctness and the failure-mode
+asymmetry that pick C over B are orthogonal to recursion sharing), but it
+**inverts the cost characterisation**:
+
+- The measured 1.11–1.34× NaN-box penalty was, by this ADR's own finding, copy-GC
+  *bandwidth* — "the wall-clock hit scales with collection frequency." Collection
+  frequency on these workloads is now ~10× lower, so that penalty largely
+  evaporates on the same inputs. The honest post-fix A/B number is smaller and
+  must be re-measured.
+- The residual cost shifts to **cache density**, which the table above explicitly
+  ruled out ("not a cache wall"). That was true in the GC-bound regime; post-fix
+  the hot path is cache-bound. 16-byte cells (C) halve the cells-per-cache-line
+  versus the 8-byte baseline, so the cache-pressure point arrives at roughly half
+  the cell count. Observed on the current 32-bit build: sys time jumps
+  0.05 s → 0.24 s at core-size 32768 (33 M cells @ 8 B) with no compute change;
+  under C expect the same wall at ~16384.
+
+Sizing consequence: the default heap was oversized to paper over the quadratic.
+Post-fix the needed live set is small, so the default core-size should drop
+regardless of representation; under C specifically, ~512 (current units) holds
+the same memory and headroom that 1024 gives today.
+
+Re-run the equal-cell-count A/B after the fix before quoting a cost number: the
+GC-bandwidth figure in the table is now an overestimate, and the real remaining
+question is the cache-density delta at the (smaller) heap sizes linear recursion
+actually needs.
