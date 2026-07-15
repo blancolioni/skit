@@ -256,7 +256,7 @@ package body Skit.Machines is
          use Skit.Memory;
          Arg_Count : constant Natural :=
                        (case Combinator is
-                           when Payload_I                         => 1,
+                           when Payload_I | Payload_Y             => 1,
                            when Payload_K                         => 2,
                            when Payload_S | Payload_C | Payload_B => 3,
                            when Payload_C_Prime | Payload_B_Star  => 4,
@@ -294,7 +294,28 @@ package body Skit.Machines is
 
          if Pop (X) then
             Changed := True;
+            if Combinator = Payload_Y then
+               --  Fixpoint by knot-tying.  The redex root X (1) is the node
+               --  App (Y, f).  Rewrite it in place to App (f, X (1)) -- a
+               --  self-referential cell whose own value is the fixpoint.
+               --  Every recursive reference (the argument handed to f) is
+               --  this one shared node, so when App (f, X (1)) reduces its
+               --  result overwrites X (1) and later unfoldings reuse it:
+               --  O(1) work per step and O(1) live space, versus the
+               --  quadratic re-reduction of the combinator Y = S S I ....
+               declare
+                  F : constant Object := Right (X (1));
+               begin
+                  Set_Left  (This.Core, X (1), F);
+                  Set_Right (This.Core, X (1), X (1));
+                  This.Push (Control, X (1));
+               end;
+               return;
+            end if;
             case Combinator is
+               when Payload_Y =>
+                  null;  --  handled above, before this case
+
                when Payload_I =>
                   Push (1);
 
@@ -355,9 +376,24 @@ package body Skit.Machines is
             end case;
 
             It := This.Pop;
-            Set_Left (This.Core, X (Arg_Count), Skit.I);
-            Set_Right (This.Core, X (Arg_Count), It);
-            This.Push (Control, It);
+            if Tag (It) = Application_Object
+              and then Combinator not in Payload_I | Payload_K
+            then
+               --  S, B, C, S', B*, C' build a fresh top node unique to this
+               --  redex, so overwrite the root with its contents directly
+               --  rather than an App (I, It) indirection.  This avoids the
+               --  identity-indirection chains that otherwise accumulate one
+               --  cell per reduction and leak O(n) space.  I and K return an
+               --  existing (possibly shared) argument, so they must keep the
+               --  indirection to preserve sharing under later updates.
+               Set_Left (This.Core, X (Arg_Count), Left (It));
+               Set_Right (This.Core, X (Arg_Count), Right (It));
+               This.Push (Control, X (Arg_Count));
+            else
+               Set_Left (This.Core, X (Arg_Count), Skit.I);
+               Set_Right (This.Core, X (Arg_Count), It);
+               This.Push (Control, It);
+            end if;
          end if;
 
       end Eval_Combinator;
