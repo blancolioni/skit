@@ -8,6 +8,7 @@ package Skit.Combinators is
    S_Prime : constant Object;
    B_Star  : constant Object;
    C_Prime : constant Object;
+   Y       : constant Object;
 
 private
 
@@ -19,5 +20,6 @@ private
    S_Prime : constant Object := Skit.S_Prime;
    B_Star  : constant Object := Skit.B_Star;
    C_Prime : constant Object := Skit.C_Prime;
+   Y       : constant Object := Skit.Y;
 
 end Skit.Combinators;

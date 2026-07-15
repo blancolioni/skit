@@ -83,11 +83,12 @@ private
    Payload_S_Prime    : constant Object_Payload := 6;
    Payload_B_Star     : constant Object_Payload := 7;
    Payload_C_Prime    : constant Object_Payload := 8;
-   Payload_Undefined  : constant Object_Payload := 9;
-   Payload_Suspension : constant Object_Payload := 10;
+   Payload_Y          : constant Object_Payload := 9;
+   Payload_Undefined  : constant Object_Payload := 10;
+   Payload_Suspension : constant Object_Payload := 11;
 
    subtype Combinator_Payload is
-     Object_Payload range Payload_S .. Payload_C_Prime;
+     Object_Payload range Payload_S .. Payload_Y;
 
    Nil        : constant Object := (Payload_Nil, Primitive_Object);
    S          : constant Object := (Payload_S, Primitive_Object);
@@ -98,6 +99,7 @@ private
    S_Prime    : constant Object := (Payload_S_Prime, Primitive_Object);
    B_Star     : constant Object := (Payload_B_Star, Primitive_Object);
    C_Prime    : constant Object := (Payload_C_Prime, Primitive_Object);
+   Y          : constant Object := (Payload_Y, Primitive_Object);
    Undefined  : constant Object := (Payload_Undefined, Primitive_Object);
    Suspension : constant Object := (Payload_Suspension, Primitive_Object);
 
