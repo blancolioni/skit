@@ -475,39 +475,25 @@ package body Skit.Machines is
                   Fn      : Primitive_Evaluator_Interface'Class
                   renames This.Prims (F_Index);
                begin
-                  --  Position of this argument = number of App wrappers left.
-                  while Is_App (Walk) loop
-                     Index := Index + 1;
-                     Walk  := Left (Walk);
-                  end loop;
-
-                  declare
-                     F_Index : constant Natural :=
-                                 Natural
-                                   (Walk.Payload
-                                    - Primitive_Function_Payload'First);
-                     Fn      : Primitive_Evaluator_Interface'Class
-                     renames This.Prims (F_Index);
-                  begin
-                     case Fn.Argument_Modes (Index) is
-                        when Lazy =>
-                           --  Lazy: pass the thunk unevaluated, then advance.
-                           --  Push before mutating Frame so Arg stays
-                           --  reachable through Frame across any collection
-                           --  in Push.
-                           This.Push (Arg);
-                           Skit.Memory.Set_Left
-                             (This.Core, Frame, Left (Partial));
-                        when Strict =>
-                           --  Strict: force the argument.  Push it onto
-                           --  Control (a GC root) first, then advance Frame.
-                           This.Push (Control, Arg);
-                           Skit.Memory.Set_Left
-                             (This.Core, Frame, Left (Partial));
-                           Changed := True;
-                           return;
-                     end case;
-                  end;
+                  case Fn.Argument_Modes (Index) is
+                     when Lazy =>
+                        --  Lazy: pass the thunk unevaluated, then advance.
+                        --  Push before mutating Frame so Arg stays
+                        --  reachable through Frame across any collection
+                        --  in Push.
+                        This.Push (Arg);
+                        Skit.Memory.Set_Left
+                           (This.Core, Frame, Left (Partial));
+                     when Strict =>
+                        --  Strict: force the argument.  Push it onto
+                        --  Control (a GC root) first, then advance Frame.
+                        This.Push (Control, Arg);
+                        Skit.Memory.Set_Left
+                           (This.Core, Frame, Left (Partial));
+                        Changed := True;
+                        This.Advancing_Primitive := False;
+                        return;
+                  end case;
                end;
             end;
          end loop;
