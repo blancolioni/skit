@@ -1,6 +1,18 @@
 # ADR 0001: Skit Object Representation
 
-- **Status:** Investigating
+- **Status:** Deferred (2026-07-15) — option C (NaN-boxed 64-bit) is the target
+  representation and its cost is now measured (bounded, memory-bound, ≈ +10–20%
+  wall at the small-heap regime the reduction fixes make optimal). But the
+  correctness prize is unrealized until the numeric tower exists, so adopting C
+  now would pay ~10% on every (float-cold) workload for a benefit nothing can
+  use yet. Stay on 32-bit; revisit at numeric-tower time.
+  **Revisit trigger:** numeric-tower implementation. At that point the float
+  correctness benefit becomes real; measure the tower's actual float density and
+  re-check option B (heap-boxed floats) against it before committing to C — if
+  floats are rare, B's alloc-storm failure mode never fires and the 32-bit
+  hot path survives. The stable public interface (`To_Object`, `Is_Integer`,
+  `To_Integer`, `Is_Application`, `To_Variable_Object`) keeps the switch a
+  bounded, mechanical rework, so deferring costs nothing built now.
 - **Date:** 2026-07-04
 - **Deciders:** Fraser Wilson
 
@@ -86,14 +98,81 @@ with the box space.
   is 8-byte-word based on 64-bit hosts). The current 32-bit cell is the unusual
   choice; 2× memory is normal sizing, not exotic.
 
+## Cost measurement (post-fix A/B)
+
+The 2× cost was measured directly, both representations built with the current
+reduction fixes in place — the knot-tying `Y` combinator and the redex-update
+change that overwrites a redex root with its result's contents instead of an
+`App (I, .)` indirection. Those fixes matter here: they cut the live working set
+to a small, roughly-constant size and made a *small* heap the optimal operating
+point, which is the regime the representation must be judged in.
+
+Workload: `print (sum [1..10000])` (= 50005000), core-size swept 512 … 32768,
+min of the reported run. **Every non-timing metric is byte-identical across the
+two formats at every core size** — allocated cells (12,527,114), GC count
+(60/26/12/6/3/1/0), copied cells, static/transient split, `Static<-young`
+writes. The object format changes cell *size* and per-access cost only; it does
+not touch the graph, the work, or the collector's behaviour. So this is a clean
+apples-to-apples where representation is the sole variable.
+
+Wall-clock (`real`, seconds) and OS memory time (`sys`, seconds):
+
+| core-size | cells | 32-bit real | NaN real | NaN penalty | 32-bit sys | NaN sys |
+|-----------|-------|-------------|----------|-------------|-----------|---------|
+| 512   | 262 K  | 0.323 | 0.353 | +9%  | 0.033 | 0.042 |
+| 1024  | 524 K  | 0.295 | 0.356 | +21% | 0.050 | 0.052 |
+| 2048  | 1.0 M  | 0.304 | 0.322 | +6%  | 0.051 | 0.054 |
+| 4096  | 2.1 M  | 0.350 | 0.331 | −5%  | 0.060 | 0.076 |
+| 8192  | 4.2 M  | 0.328 | 0.377 | +15% | 0.078 | 0.120 |
+| 16384 | 8.4 M  | 0.364 | 0.475 | +30% | 0.107 | 0.201 |
+| 32768 | 16.8 M | 0.458 | 0.711 | +55% | 0.193 | 0.423 |
+
+Findings:
+
+- **The penalty is memory-bound, not compute-bound.** `user` CPU is close and
+  roughly flat across heap sizes (both ≈ 0.25–0.30 s); the 64-bit mask+compare
+  tag dispatch vs. a bitfield read is a small, size-independent tax. Reported
+  `Evaluation` time is comparable and noisy (both ≈ 90–130 ms, falling as the
+  heap grows and GC fires less).
+- **The divergence is entirely `sys` time, and it scales with heap size** —
+  ≈ 1× at small heaps, 1.9× at 16384, 2.2× at 32768. This is the 2× cell
+  footprint (16-byte NaN cells vs. 8-byte packed) realised as OS paging: twice
+  the semispace to fault in and zero. It is the predicted bounded cost, not a
+  cache cliff or a compute regression.
+- **The fixes put the penalty in its cheapest regime.** Both formats peak at a
+  *small* heap (512–2048) and *degrade* past ~8192 on `sys`/cache; a large heap
+  now buys nothing because the live set is small. Operated where it should be —
+  a small default heap — the NaN penalty is ≈ +6–21% wall. The ugly +55% appears
+  only under gratuitous oversizing, which the fixes remove any reason for.
+
+Net: 32-bit is consistently faster, cheaply (footprint), and correct *for
+float-cold workloads*. NaN-boxing's justification is float **correctness**, not
+speed; this quantifies its price as ≈ +10–20% wall at sensible heap sizes,
+rising to 2× `sys` / +55% wall only when the heap is oversized. Keeping the
+default heap small (now free) keeps the footprint penalty in its smallest
+regime.
+
 ## Leaning
 
-Option **C (NaN-boxed 64-bit)**, subject to validating the cost.
+Option **C (NaN-boxed 64-bit)** as the target, but **not yet**. The cost — the
+only open risk — is now measured (see above): a bounded, memory-bound ≈ 2× worst
+case that stays around +10–20% wall in the small-heap regime the fixes make
+optimal. Correctness is decisive and makes C the eventual choice; the price is
+acceptable and predictable *once there is a benefit to weigh it against*.
+
+Adoption is deferred to numeric-tower time (see Status). Until the tower exists
+every workload is float-cold, so C would cost ~10% for nothing realisable. Two
+things to settle at the tower, in order: (1) measure the tower's float density —
+if floats are rare, reconsider option B (heap-boxed floats), whose only failure
+mode is float-heavy loops that a rare-float tower never triggers, keeping the
+cache-tight 32-bit hot path; (2) if float usage is real and hot, commit to C.
 
 ## Open questions
 
-- Measure the real 2× memory / cache impact on representative workloads before
-  committing.
+- ~~Measure the real 2× memory / cache impact on representative workloads before
+  committing.~~ **Resolved** (see Cost measurement): memory-bound, ≈ 2× `sys` at
+  large heaps, ≈ +10–20% wall at the small heaps the reduction fixes make
+  optimal. No cache cliff.
 - Represent Haskell `Float` (32-bit) and `Double` (64-bit) as distinct types,
   or promote everything to `Double` internally?
 - Confirm bit-pattern preservation across the GNAT `Long_Float` code paths
