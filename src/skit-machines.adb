@@ -101,7 +101,7 @@ package body Skit.Machines is
       Name  : Object;
       Value : Object)
    is
-      Key      : constant Object_Payload := Name.Payload;
+      Key      : constant Object_Payload := Payload (Name);
       Position : constant Environment_Maps.Cursor :=
                    This.Environment.Find (Key);
    begin
@@ -137,21 +137,17 @@ package body Skit.Machines is
       Start : constant Time := Clock;
       X     : constant Object := This.Pop;
    begin
-      case X.Tag is
-         when Integer_Object =>
-            This.Push (X);
-         when Float_Object =>
-            This.Push (X);
-         when Primitive_Object =>
-            This.Push (X);
-         when Application_Object =>
-            if Trace then
-               Ada.Text_IO.Put_Line
-                 ("eval: " & This.Debug_Image (X));
-            end if;
-            This.Push (Control, X);
-            This.Evaluate_Application (User_Data);
-      end case;
+      if Is_Application (X) then
+         if Trace then
+            Ada.Text_IO.Put_Line
+              ("eval: " & This.Debug_Image (X));
+         end if;
+         This.Push (Control, X);
+         This.Evaluate_Application (User_Data);
+      else
+         --  Integer, float, or primitive: already a value.
+         This.Push (X);
+      end if;
       This.Eval_Time := @ + (Clock - Start);
    end Evaluate;
 
@@ -165,7 +161,7 @@ package body Skit.Machines is
    is
 
       function Is_App (App : Object) return Boolean
-      is (App.Tag = Application_Object);
+      is (Is_Application (App));
 
       function Left (App : Object) return Object
       is (Skit.Memory.Left (This.Core, App));
@@ -179,14 +175,13 @@ package body Skit.Machines is
       is (Skit.Memory.Left (This.Core, This.Internal (Control)));
 
       function Is_Defined_Primitive
-        (Payload : Object_Payload)
+        (X : Object)
          return Boolean
-      is (Payload in Primitive_Function_Payload
-          and then Natural (Payload - Primitive_Function_Payload'First)
-          <= This.Prims.Last_Index);
+      is (Is_Primitive_Function (X)
+          and then Primitive_Function_Index (X) <= This.Prims.Last_Index);
 
       procedure Eval_Combinator (Combinator : Combinator_Payload);
-      procedure Eval_Primitive (F : Primitive_Function_Payload)
+      procedure Eval_Primitive (F : Object)
         with Pre => Is_Defined_Primitive (F);
 
       procedure Eval_Suspension;
@@ -376,7 +371,7 @@ package body Skit.Machines is
             end case;
 
             It := This.Pop;
-            if It.Tag = Application_Object
+            if Is_Application (It)
               and then Combinator not in Payload_I | Payload_K
             then
                --  S, B, C, S', B*, C' build a fresh top node unique to this
@@ -402,10 +397,8 @@ package body Skit.Machines is
       -- Eval_Primitive --
       --------------------
 
-      procedure Eval_Primitive (F : Primitive_Function_Payload) is
-         P  : constant Natural :=
-                Natural
-                  (F - Primitive_Function_Payload'First);
+      procedure Eval_Primitive (F : Object) is
+         P  : constant Natural := Primitive_Function_Index (F);
          Fn : Primitive_Evaluator_Interface'Class renames This.Prims (P);
       begin
          if Fn.Argument_Count = 0 then
@@ -417,7 +410,7 @@ package body Skit.Machines is
             --  left-nested chain q_N whose Left spine bottoms out at the
             --  primitive and whose Right at each level is the original spine
             --  node carrying that argument.  Right (q_N) is the redex root.
-            This.Push ((F, Primitive_Object));
+            This.Push (F);
 
             for I in 1 .. Fn.Argument_Count loop
                This.Push (This.Pop (Control));
@@ -484,9 +477,7 @@ package body Skit.Machines is
 
                declare
                   F_Index : constant Natural :=
-                              Natural
-                                 (Walk.Payload
-                                 - Primitive_Function_Payload'First);
+                              Primitive_Function_Index (Walk);
                   Fn      : Primitive_Evaluator_Interface'Class
                   renames This.Prims (F_Index);
                begin
@@ -517,8 +508,7 @@ package body Skit.Machines is
          declare
             Prim    : constant Object := Left (Frame);
             P_Index : constant Natural :=
-                        Natural (Prim.Payload
-                                 - Primitive_Function_Payload'First);
+                        Primitive_Function_Index (Prim);
             Fn      : Primitive_Evaluator_Interface'Class
             renames This.Prims (P_Index);
          begin
@@ -587,7 +577,7 @@ package body Skit.Machines is
          Changed := False;
          It := This.Pop (Control);
 
-         while It.Tag = Application_Object loop
+         while Is_Application (It) loop
             if Trace then
                Ada.Text_IO.Put_Line
                  ("push: " & This.Debug_Image (Right (It)));
@@ -601,21 +591,18 @@ package body Skit.Machines is
               ("stop: " & This.Debug_Image (It));
          end if;
 
-         if It.Tag = Primitive_Object then
-            case It.Payload is
-               when Combinator_Payload =>
-                  Eval_Combinator (It.Payload);
-               when Primitive_Function_Payload =>
-                  if Is_Defined_Primitive (It.Payload) then
-                     Eval_Primitive (It.Payload);
-                  else
-                     raise Constraint_Error with
-                       "undefined primitive: " & This.Debug_Image (It);
-                  end if;
-               when others =>
-                  raise Constraint_Error with
-                    "invalid primitive:" & It.Payload'Image;
-            end case;
+         if Is_Combinator (It) then
+            Eval_Combinator (Payload (It));
+         elsif Is_Primitive_Function (It) then
+            if Is_Defined_Primitive (It) then
+               Eval_Primitive (It);
+            else
+               raise Constraint_Error with
+                 "undefined primitive: " & This.Debug_Image (It);
+            end if;
+         elsif Is_Primitive (It) then
+            raise Constraint_Error with
+              "invalid primitive:" & Payload (It)'Image;
          else
             This.Push (It);
          end if;
@@ -631,7 +618,7 @@ package body Skit.Machines is
       --  head (a bare combinator or an under-saturated partial application)
       --  still needs pushing here; pushing an atom again would leave a
       --  duplicate on the stack.
-      if It.Tag = Primitive_Object then
+      if Is_Primitive (It) then
          This.Push (It);
       end if;
       Collect_Result;
@@ -715,7 +702,7 @@ package body Skit.Machines is
       return Object
    is
       use Environment_Maps;
-      Position : constant Cursor := This.Environment.Find (Name.Payload);
+      Position : constant Cursor := This.Environment.Find (Payload (Name));
    begin
       if Has_Element (Position) then
          return Element (Position);
@@ -775,9 +762,7 @@ package body Skit.Machines is
    is
    begin
       This.Prims.Append (Primitive);
-      return (Object_Payload (This.Prims.Last_Index)
-              + Primitive_Function_Payload'First,
-              Primitive_Object);
+      return Primitive_Function (This.Prims.Last_Index);
    end Primitive;
 
    ----------

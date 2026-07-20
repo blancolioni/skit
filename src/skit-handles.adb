@@ -244,12 +244,10 @@ package body Skit.Handles is
          return Element (Position);
       else
          This.H.Vector.Append (Name);
-         return Symbol : constant Object :=
-           (Object_Payload (This.H.Vector.Last_Index)
-            + Primitive_Variable_Payload'First,
-            Primitive_Object)
+         return Sym : constant Object :=
+           Symbol (Natural (This.H.Vector.Last_Index))
          do
-            This.H.Map.Insert (Name, Symbol);
+            This.H.Map.Insert (Name, Sym);
          end return;
       end if;
    end To_Symbol_Object;
