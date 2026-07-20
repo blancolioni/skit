@@ -60,6 +60,9 @@ loader must never attempt to resume them.
 
 Adopt a **relocatable, name-linked module image** with a two-pass loader.
 
+> The concrete byte-level layout is sketched in
+> [module-image-format.md](../module-image-format.md).
+
 ### The id classes
 
 A cell payload is relocated according to its class, distinguishable from the
