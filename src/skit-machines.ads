@@ -4,6 +4,12 @@ private with Skit.Memory;
 
 private package Skit.Machines is
 
+   --  Inline_Always subprograms keep a documented Pre that, with assertions
+   --  enabled, the inlined body cannot enforce; silence GNAT's "not enforced"
+   --  warning while keeping the contract for documentation/static analysis.
+   pragma Warnings
+     (Off, "aspect ""Pre"" not enforced on inlined subprogram*");
+
    type Instance (Core_Size : Cell_Address) is tagged limited private;
 
    procedure Initialize (This : in out Instance'Class);

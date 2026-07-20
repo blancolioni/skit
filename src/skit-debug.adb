@@ -19,59 +19,58 @@ package body Skit.Debug is
 
    function Image (X : Object) return String is
    begin
-      case Tag (X) is
-         when Integer_Object =>
-            return Ada.Strings.Fixed.Trim
-              (To_Integer (X)'Image, Ada.Strings.Left);
-         when Float_Object =>
-            return Ada.Strings.Fixed.Trim
-              (To_Float (X)'Image, Ada.Strings.Left);
-         when Primitive_Object =>
-            case Payload (X) is
-               when Payload_Nil =>
-                  return "nil";
-               when Payload_S =>
-                  return "S";
-               when Payload_K =>
-                  return "K";
-               when Payload_I =>
-                  return "I";
-               when Payload_C =>
-                  return "C";
-               when Payload_B =>
-                  return "B";
-               when Payload_S_Prime =>
-                  return "S'";
-               when Payload_B_Star =>
-                  return "B*";
-               when Payload_C_Prime =>
-                  return "C'";
-               when Payload_Y =>
-                  return "Y";
-               when Payload_Undefined =>
-                  return "*undefined*";
-               when Payload_Suspension =>
-                  return "*suspend*";
-               when Primitive_Variable_Payload =>
-                  declare
-                     Ch : constant Character :=
-                            Character'Val
-                              (Payload (X) - Primitive_Variable_Payload'First
-                               + Character'Pos ('a'));
-                  begin
-                     return [Ch];
-                  end;
-               when others =>
-                  return "<"
-                    & Ada.Strings.Fixed.Trim
-                    (Payload (X)'Image, Ada.Strings.Left)
-                    & ">";
-            end case;
-         when Application_Object =>
-            return "("
-              & Ada.Strings.Fixed.Trim (Payload (X)'Image, Ada.Strings.Left)
-              & ")";
-      end case;
+      if Is_Integer (X) then
+         return Ada.Strings.Fixed.Trim
+           (To_Integer (X)'Image, Ada.Strings.Left);
+      elsif Is_Float (X) then
+         return Ada.Strings.Fixed.Trim
+           (To_Float (X)'Image, Ada.Strings.Left);
+      elsif Is_Application (X) then
+         return "("
+           & Ada.Strings.Fixed.Trim (Payload (X)'Image, Ada.Strings.Left)
+           & ")";
+      else
+         --  A primitive: combinator, defined function, or symbol variable.
+         case Payload (X) is
+            when Payload_Nil =>
+               return "nil";
+            when Payload_S =>
+               return "S";
+            when Payload_K =>
+               return "K";
+            when Payload_I =>
+               return "I";
+            when Payload_C =>
+               return "C";
+            when Payload_B =>
+               return "B";
+            when Payload_S_Prime =>
+               return "S'";
+            when Payload_B_Star =>
+               return "B*";
+            when Payload_C_Prime =>
+               return "C'";
+            when Payload_Y =>
+               return "Y";
+            when Payload_Undefined =>
+               return "*undefined*";
+            when Payload_Suspension =>
+               return "*suspend*";
+            when Primitive_Variable_Payload =>
+               declare
+                  Ch : constant Character :=
+                         Character'Val
+                           (Symbol_Index (X) + Character'Pos ('a'));
+               begin
+                  return [Ch];
+               end;
+            when others =>
+               return "<"
+                 & Ada.Strings.Fixed.Trim
+                 (Payload (X)'Image, Ada.Strings.Left)
+                 & ">";
+         end case;
+      end if;
    end Image;
 
    -----------
@@ -101,7 +100,7 @@ package body Skit.Debug is
 
       function Img (X : Object) return String is
       begin
-         if Tag (X) = Application_Object then
+         if Is_Application (X) then
             if Visited_Set.Contains (Payload (X)) then
                return "[recursive]";
             end if;
@@ -117,8 +116,7 @@ package body Skit.Debug is
                end if;
             end;
          elsif False
-           and then Tag (X) = Primitive_Object
-           and then Payload (X) in Primitive_Variable_Payload
+           and then Is_Symbol (X)
          then
             for Binding of Vrbs loop
                if Binding.V = X then

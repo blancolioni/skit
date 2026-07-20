@@ -12,7 +12,7 @@ package body Skit.Memory is
    --  any live semispace, so a stale read of a reclaimed cell either trips the
    --  heap check or faults on the out-of-range index instead of silently
    --  returning plausible-looking garbage.
-   Invalid : constant Object := Make_Application (Object_Payload'Last);
+   Invalid : constant Object := Application (Object_Payload'Last);
 
    procedure Check_Heap
      (This  : Instance;
@@ -25,7 +25,7 @@ package body Skit.Memory is
       Item   : Object)
       return Boolean
    is (Is_Application (Item)
-         and then Address (Item) in
+         and then Payload (Item) in
            This.From_Space .. This.From_Space + This.Space_Size - 1);
 
    function In_To_Space
@@ -33,7 +33,7 @@ package body Skit.Memory is
       Item   : Object)
       return Boolean
    is (Is_Application (Item)
-       and then Address (Item) in
+       and then Payload (Item) in
          This.To_Space .. This.To_Space + This.Space_Size - 1);
 
    function Copy
@@ -80,7 +80,7 @@ package body Skit.Memory is
       This.Core (This.Free) := (Left, Right);
       This.Free := @ + 1;
       This.Alloc_Count := @ + 1;
-      return Make_Application (This.Free - 1);
+      return Application (This.Free - 1);
    end Append;
 
    ---------------
@@ -127,12 +127,12 @@ package body Skit.Memory is
       is
       begin
          if Is_Application (Child)
-           and then Address (Child) not in Low .. High - 1
+           and then Payload (Child) not in Low .. High - 1
          then
             raise Program_Error with
               "heap check (" & Where & "): " & Field
               & " of cell" & Cell_Address'Image (Site)
-              & " points to" & Cell_Address'Image (Address (Child))
+              & " points to" & Cell_Address'Image (Payload (Child))
               & " outside to-space [" & Cell_Address'Image (Low)
               & " .." & Cell_Address'Image (High) & ")";
          end if;
@@ -240,7 +240,7 @@ package body Skit.Memory is
       return Object
    is
    begin
-      return This.Core (Address (App)).Left;
+      return This.Core (Payload (App)).Left;
    end Left;
 
    ----------
@@ -270,17 +270,17 @@ package body Skit.Memory is
       end if;
 
       declare
-         From_Addr : constant Cell_Address := Address (Item);
-         Cell      : Cell_Type renames This.Core (From_Addr);
+         Address : constant Cell_Address := Payload (Item);
+         Cell    : Cell_Type renames This.Core (Address);
       begin
          if not In_To_Space (This, Cell.Left) then
             This.Copied := This.Copied + 1;
-            if From_Addr < This.Static_Top then
+            if Address < This.Static_Top then
                This.Static_Copied := @ + 1;
             else
                This.Transient_Copied := @ + 1;
             end if;
-            Cell.Left := Make_Application (Copy (This, From_Addr));
+            Cell.Left := Application (Copy (This, Address));
          end if;
          return Cell.Left;
       end;
@@ -309,7 +309,7 @@ package body Skit.Memory is
       return Object
    is
    begin
-      return This.Core (Address (App)).Right;
+      return This.Core (Payload (App)).Right;
    end Right;
 
    --------------
@@ -322,14 +322,14 @@ package body Skit.Memory is
       To   : Object)
    is
    begin
-      if Address (App) < This.Static_Top
+      if Payload (App) < This.Static_Top
         and then Is_Application (To)
-        and then Address (To) >= This.Static_Top
+        and then Payload (To) >= This.Static_Top
       then
          This.Remembered_Writes := @ + 1;
          This.Epoch_Remembered  := @ + 1;
       end if;
-      This.Core (Address (App)).Left := To;
+      This.Core (Payload (App)).Left := To;
    end Set_Left;
 
    ---------------
@@ -342,14 +342,14 @@ package body Skit.Memory is
       To   : Object)
    is
    begin
-      if Address (App) < This.Static_Top
+      if Payload (App) < This.Static_Top
         and then Is_Application (To)
-        and then Address (To) >= This.Static_Top
+        and then Payload (To) >= This.Static_Top
       then
          This.Remembered_Writes := @ + 1;
          This.Epoch_Remembered  := @ + 1;
       end if;
-      This.Core (Address (App)).Right := To;
+      This.Core (Payload (App)).Right := To;
    end Set_Right;
 
 end Skit.Memory;

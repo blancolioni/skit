@@ -166,6 +166,9 @@ private
    subtype Primitive_Variable_Payload is
      Object_Payload range 4096 .. 65535;
 
+   function Payload (X : Object) return Object_Payload
+   is (X.Payload);
+
    function Is_Integer (X : Object) return Boolean
    is (Tag (X) = Integer_Object);
 
@@ -194,5 +197,36 @@ private
 
    function Is_Undefined (X : Object) return Boolean
    is (X = Undefined);
+
+   function Is_Combinator (X : Object) return Boolean
+   is (Is_Primitive (X) and then X.Payload in Combinator_Payload);
+
+   function Is_Primitive_Function (X : Object) return Boolean
+   is (Is_Primitive (X) and then X.Payload in Primitive_Function_Payload);
+
+   --  Constructors: the only sanctioned way to build an Object outside the
+   --  top-level Skit package, so the tag/payload layout stays private here.
+
+   function Application (Address : Object_Payload) return Object
+   is ((Address, Application_Object));
+
+   --  A primitive function is stored as base + its zero-based slot in the
+   --  machine's primitive table; the index round-trips through these two.
+
+   function Primitive_Function (Index : Natural) return Object
+   is ((Primitive_Function_Payload'First + Object_Payload (Index),
+        Primitive_Object));
+
+   function Primitive_Function_Index (X : Object) return Natural
+   is (Natural (X.Payload - Primitive_Function_Payload'First));
+
+   --  A symbol is base + its index in the handle's symbol vector.
+
+   function Symbol (Index : Natural) return Object
+   is ((Primitive_Variable_Payload'First + Object_Payload (Index),
+        Primitive_Object));
+
+   function Symbol_Index (X : Object) return Natural
+   is (Natural (X.Payload - Primitive_Variable_Payload'First));
 
 end Skit;
