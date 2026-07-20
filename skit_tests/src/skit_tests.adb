@@ -89,7 +89,7 @@ begin
    Test ("sum (fromTo 1 100)", 5050);
    Test ("(\x.+ x x) (+ 4 (trace 5))", 18);
    Test ("seq (+ 1 2) (+ 2 3)", 5);
-   Test ("eq #maxInt 536870911 1 0", 1);
-   Test ("+ 0 #minInt", -536870912);
+   Test ("eq #maxInt 2147483647 1 0", 1);
+   Test ("+ 0 #minInt", -2147483648);
    Report;
 end Skit_Tests;
