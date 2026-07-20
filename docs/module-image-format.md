@@ -21,7 +21,8 @@ and two-pass loader are implemented.
 - **Name reference** (`nameref`) = `u32`, a byte offset into the String Pool
   section. The pool holds each distinct name once as `u16 length` + `length`
   bytes, UTF-8; a `nameref` points at the `length`. Names are the only
-  cross-boundary identity (imports, exports, symbol atoms, blob tags); no
+  cross-boundary identity (imports, exports, symbol atoms, foreign-object class
+  names); no
   build-specific integer index ever crosses the boundary. Keeping names in a
   pool — never inline in the header — leaves the header **fixed-size** so
   `section_count` and the directory sit at bootstrap-constant offsets.
@@ -40,7 +41,7 @@ and two-pass loader are implemented.
 | Section directory  |  section_count x (kind, offset, length)
 +--------------------+
 | Section bodies ... |  StringPool, Cells, Exports, ImportReloc, SymbolAtoms,
-|                    |  Annotations, Blobs, Fingerprint  (any order)
+|                    |  Annotations, ForeignObjects, Fingerprint  (any order)
 +--------------------+
 | Checksum trailer   |  integrity over everything above
 +--------------------+
@@ -94,7 +95,7 @@ Section kinds:
 | ImportReloc | 3 | yes* | named-import fixups (*may be empty, never absent) |
 | SymbolAtoms | 4 | no  | runtime symbol-object names |
 | Annotations | 5 | no  | per-export opaque host data (Leander types) |
-| Blobs       | 6 | no  | host-owned opaque objects |
+| ForeignObjects | 6 | no  | host-owned graph nodes (class + children + bytes) |
 | Fingerprint | 7 | yes | stale-link detection |
 
 Unknown `kind` values are skipped by `length` (forward-compat). A `nameref` is a
@@ -127,7 +128,9 @@ Cell `i` is local node id `i`. An `Application` payload is a local node id
 `Undefined` sentinel word (payload 10) and is listed in ImportReloc; pass 2
 overwrites it. `Nil` (payload 0) never appears in a valid cell. Unforced
 `Suspension` thunks are legal inert content and are reloaded as-is — never
-resumed.
+resumed. A `Primitive` payload in the symbol range (4096+) or the foreign-object
+range (`2**20 .. 2**21-1`) is rewritten through the pass-1 local-id remap table
+(SymbolAtoms / ForeignObjects respectively).
 
 ## Exports (kind 2)
 
@@ -185,24 +188,49 @@ Keyed by **export name** (survives relocation/renumbering; node ids do not).
 Skit never parses `Bytes` — for Leander it is the inferred type. Any internal
 versioning lives inside the bytes and is the host's concern.
 
-## Blobs (kind 6)
+## ForeignObjects (kind 6)
 
 ```
-u32          blob_count
-blob[]       blob_count x { nameref Type_Tag; u64 Length; u8 Bytes[Length] }
+u32          object_count
+object[]     object_count x { nameref     Class_Name;
+                              u32          Local_Payload;   -- foreign-object range
+                              u32          Child_Count;
+                              obj          Children[Child_Count];
+                              u64          Length;
+                              u8           Bytes[Length] }
 ```
 
-Host-owned opaque objects, framed `tag + length + bytes`. `Length` is `u64` to
-reserve for large/streamed blobs (a future counting-sub-stream writer
-back-patches this slot — no format bump). At load, dispatch on `Type_Tag`:
+Host-owned graph nodes (see ADR 0002, *Foreign objects*). Each is framed
+`class-name + child vector + length + bytes`:
 
-- tag **registered** → call the host factory with `Bytes`;
-- tag **not registered** → skip by `Length` (the sole skip trigger); a reachable
-  binding that references a skipped blob is demoted to an error naming the tag;
-- tag registered but factory **fails** → hard load error (not a skip).
+- **`Local_Payload`** is this object's machine-local payload (in the
+  foreign-object range `2**20 .. 2**21-1`). Load deserializes the object, binds
+  it into the merged machine — yielding a *new* payload — and records
+  `Local_Payload → new payload` in the same local-id remap table symbol atoms
+  use. Cells referencing the object are rewritten through that map.
+- **`Children`** are the object's `Skit.Object` children, written in
+  `Foreign_Object_Interface.Visit` order. They are relocated exactly like cell
+  contents (internal refs offset by base, nested foreign payloads remapped) and
+  handed back to the factory *positionally* — so Visit order is a hard contract
+  (unstable order corrupts the object).
+- **`Bytes`** are opaque leaf data (`Serialize`), binary-safe
+  `Stream_Element_Array`, not `String`. `Length` is `u64` to reserve for
+  large/streamed payloads (a future counting-sub-stream writer back-patches this
+  slot — no format bump).
 
-`Bytes` is a byte array (Ada `Stream_Element_Array`), binary-safe under `-gnatVa`
-— not `String`.
+At load, dispatch on `Class_Name`:
+
+- name **registered** → call the factory `Deserialize (Bytes, Children)`;
+- name **not registered** → skip by the record's byte span (the sole skip
+  trigger); a reachable binding that references a skipped object is demoted to an
+  error naming the class;
+- name registered but factory **fails** → hard load error (not a skip).
+
+A foreign object holds no cross-boundary integer id: its class is a name, its
+children are relocated objects, its identity is re-established by `Bind_Object` at
+load. On **dump**, `Serialize` may fail (object holds a live non-serializable
+resource) — the referencing binding is demoted to an error, mirroring the
+unknown-class case on load.
 
 ## Fingerprint (kind 7)
 
@@ -235,8 +263,10 @@ staleness, not corruption).
 For each module, in one merged heap:
 
 1. **Pass 1** — copy Cells into the merged heap at an assigned base; offset every
-   `Application` payload by the base; re-intern SymbolAtoms and remap; register
-   Exports (`name → base + local id`) in the global table.
+   `Application` payload by the base; re-intern SymbolAtoms and remap; deserialize
+   ForeignObjects (by `Class_Name`, relocating their `Children` as cell contents),
+   bind them, and remap their payloads; register Exports (`name → base + local
+   id`) in the global table.
 2. **Pass 2** — for each ImportReloc entry, resolve `Import_Name` (sibling
    exports → host environment → hard error) and write the object into the slot.
 
@@ -245,11 +275,14 @@ mutually-referencing modules load without a topological order.
 
 ## Reconciliation notes
 
-ADR 0002 names `Skit.Environment` / `Blobs` / `Skit.Interfaces` that **do not
-exist yet**. Concretely today: the environment is the payload-keyed map in
+ADR 0002 names `Skit.Environment` / `Skit.Interfaces` that **do not exist yet**.
+Concretely today: the environment is the payload-keyed map in
 [skit-machines.ads](../src/skit-machines.ads) fronted by the string-intern layer
 in [skit-handles.ads](../src/skit-handles.ads); the heap is
-[skit-memory.ads](../src/skit-memory.ads); there is no blob storage at all. The
-blob mechanism (`Serialize`, factory registry, unknown-tag skip) is greenfield.
-This sketch's field names should be reconciled with real package names when the
-writer/loader are implemented.
+[skit-memory.ads](../src/skit-memory.ads); there is **no foreign-object storage
+at all**. The whole foreign-object mechanism — `Foreign_Object_Interface`
+(`Class_Name`/`Serialize`/`Visit`/`Free`/`Image`), the class-factory registry,
+the registry vector + mark flag, collector integration, `Bind_Object`/`Unpin`,
+the `2**20 .. 2**21-1` payload range and `Is_Foreign_Object` predicate — is
+greenfield. This sketch's field names should be reconciled with real package
+names when the writer/loader are implemented.

@@ -73,6 +73,7 @@ object tag and payload range:
 | Internal cell ref | `Application` payload = local node id | Add the module's assigned base. Uniform; needs no per-entry table. |
 | Named import | Slot holds a sentinel (`Undefined`); listed in the reloc table | Resolve the import name (see resolution order below); write the resolved object into the slot. |
 | Symbol atom | `Primitive` payload in the interned-symbol range (4096+) | Re-intern by name into the merged environment; remap old id to new id. |
+| Foreign object | `Primitive` payload in the foreign-object range (`2**20 .. 2**21-1`) | Deserialize the blob by class name (factory), bind into this machine, remap old payload to new. Same *mechanism* as symbol atoms (local-id remap), different source (run factory vs re-intern name). |
 | VM-fixed combinator | `Primitive` payload 1..9 (`S`,`K`,`I`,`C`,`B`,`S′`,`B*`,`C′`,`Y`), plus `Suspension` (11) | Left untouched. Pinned by the header's format/VM version. |
 | Integer / Float | `Integer`, `Float` | Left untouched (immediate). |
 
@@ -88,6 +89,18 @@ valid cell (`Machine.Append` forbids `Nil` on either side). Payloads 12..13 are
 currently unused. The pinned set the header's VM version guarantees is therefore
 `1..9` (the combinators, `Skit.Combinator_Payload`) plus `Suspension` (11); see
 [skit.ads](../../src/skit.ads).
+
+Though the table lists several classes, there are only **three relocation
+strategies** — the rest are no-ops:
+
+- **implicit offset** — internal `Application` refs, via the whole-heap walk;
+- **reloc-table patch** — named imports (and host primitives), by name;
+- **local-id remap** — symbol atoms *and* foreign objects: pass 1 builds an
+  old-payload → new-payload map, then one rewrite pass applies it. The two
+  differ only in how the new object is obtained (re-intern a name / run a
+  deserializer factory), so they share the map and the rewrite.
+
+Combinators, integers and floats are left untouched — not relocated at all.
 
 ### Primitives are named imports, symbolic from compile time
 
@@ -143,8 +156,10 @@ and only because the header pins them to a VM version.
    emits runtime symbol objects).
 6. **Annotations** — per export, an opaque `tag + length + bytes` record
    (Leander's inferred type). Skit never parses it.
-7. **Blobs** — per host object, `type-tag (string) + length + opaque bytes`
-   (see below).
+7. **Foreign objects** — per host object, `class-name + child-object vector +
+   length + opaque bytes`. The child vector holds the object's `Skit.Object`
+   children (relocated like cells); the bytes are opaque leaf data. See
+   *Foreign objects* below.
 8. **Interface fingerprint** — hash of export names (and, provisionally, their
    annotations) for stale-link detection.
 9. **Checksum** — integrity over the image.
@@ -153,7 +168,9 @@ and only because the header pins them to a VM version.
 
 - **Pass 1 (per module):** copy cells into the merged heap at an assigned base;
   offset every `Application` payload by the base; re-intern symbol atoms and
-  remap; register exports (`name -> base + local id`) in the global table.
+  remap; deserialize foreign objects (by class name) and remap their payloads —
+  their child vectors are relocated as cell contents in the same pass; register
+  exports (`name -> base + local id`) in the global table.
 - **Pass 2 (per module):** for each import-reloc entry, resolve the name by the
   resolution order above (sibling exports, then host resolver) and write the
   object into the cell slot.
@@ -176,51 +193,136 @@ what pass 2 left there. Provenance travels in the table; the object graph is
 never consulted to un-bake a primitive. This is what makes "fully named, no
 reverse map" (see the primitives decision) survive re-dump.
 
-### Blobs: host-owned, skit-routed
+### Foreign objects: host-owned graph nodes
 
-`Skit.Environment.Blobs` are live host Ada objects
-(`Skit.Interfaces.Abstraction'Class`) — a live access value cannot be
-serialized. The abstraction gains:
+A **foreign object** is a live host Ada value that participates in the Skit heap
+as a first-class object: it can hold `Skit.Object` children, is traced by the
+collector, and serializes into an image. (This supersedes the earlier passive
+"blob" notion — a blob is just a foreign object with no children.) A foreign
+object is stored outside the `Cell_Array` in a per-machine registry and is
+referenced from the heap by a `Primitive`-tagged object whose payload lies in the
+foreign-object range (`2**20 .. 2**21-1`, within the 30-bit payload; disjoint
+from symbols `4096 .. 65535`). `Bind_Object` allocates a registry slot and
+returns that object; the registry maps `payload -> Foreign_Object_Interface'Class`.
+
+#### The interface
 
 ```ada
-function Serialize (This : Instance) return Ada.Streams.Stream_Element_Array;
---  dispatching; produces the blob's own opaque bytes
+type Foreign_Object_Interface is limited interface;
+
+function Class_Name (This : Foreign_Object_Interface) return String is abstract;
+--  stable type tag; written to the image so the object can be deserialized,
+--  and the key the deserializer factory is registered under.
+
+function Serialize (This : Foreign_Object_Interface)
+   return Ada.Streams.Stream_Element_Array is abstract;
+--  opaque leaf bytes only (may be empty). Object children are NOT encoded here
+--  -- they are machine-local references and travel in the child vector.
+
+procedure Visit
+  (This    : in out Foreign_Object_Interface;
+   Process : not null access procedure (Child : in out Object)) is abstract;
+--  call Process on every Object child, in a FIXED, DETERMINISTIC order.
+--  One traversal, two consumers:
+--    * GC     -- Process forwards the child and rewrites the slot in place
+--               (hence Child is in out, and This is in out).
+--    * dump   -- Process appends the child to the record's child vector.
+
+procedure Free (This : in out Foreign_Object_Interface) is abstract;
+--  no live references remain; release resources. Called exactly once.
+
+function Image (This : Foreign_Object_Interface) return String is abstract;
+--  per-instance rendering for Machine.Debug_Image.
 ```
 
-Deserialization is a *class* operation (no object exists yet), so it cannot be a
-primitive method. Instead the host **registers** a factory with the machine
-before loading, keyed by string type-tag:
+`Serialize` and `Visit` are two halves of one serialization: `Serialize` emits
+opaque bytes, `Visit` enumerates the relocatable `Object` children. **`Visit`'s
+order is a contract:** dump writes children in `Visit` order; load hands them
+back positionally to the factory; `Deserialize` reconstructs by position. An
+unstable order silently corrupts the object.
+
+#### Deserialization is a class operation
+
+No object exists yet at load, so deserialization cannot be a primitive method.
+The host **registers a factory** before loading, keyed by class name:
 
 ```ada
---  Factory : Stream_Element_Array -> Interfaces.Reference
-Register_Blob_Type (Machine, Tag => "myhost.Vector3", Factory => ...);
+--  Deserialize : (Stream_Element_Array, Object_Array) -> Reference
+Register_Object_Class (Machine, Name => "myhost.Vector3", Deserialize => ...);
 ```
 
-Skit frames each blob as `tag + length + bytes` and, at load, dispatches on the
-tag:
+The factory receives both the opaque bytes and the already-relocated child
+objects. Requiring registration at `Bind_Object` time is recommended, so an
+object whose class has no factory cannot be created and the missing-factory error
+surfaces before dump, not at load.
 
-- tag **registered** -> call the factory with the bytes;
-- tag **not registered** -> *unknown blob*; skip it (this is the sole skip
-  trigger);
-- tag registered but factory **fails** (corrupt bytes) -> hard load error, not a
-  skip.
+At load skit dispatches on the class name:
+
+- name **registered** -> call the factory with `(bytes, children)`;
+- name **not registered** -> *unknown object*; skip it (the sole skip trigger).
+  A reachable binding that references a skipped object is demoted to an error
+  naming the missing class; the rest of the load proceeds;
+- name registered but factory **fails** (corrupt bytes) -> hard load error.
 
 `Stream_Element_Array` is chosen over `String`: `Stream_Element` is a byte and
 binary-safe, whereas `String` is `Character` and, under `-gnatVa`, arbitrary
-bytes in a `String` risk invalid-value checks. Length-framing is owned by skit
-(not the blob) so an unknown blob can be skipped by byte count. Any per-blob
-format versioning lives *inside* the opaque bytes and is the host's concern.
+bytes risk invalid-value checks. Length-framing is owned by skit (not the object)
+so an unknown object can be skipped by byte count. Per-object format versioning
+lives inside the opaque bytes and is the host's concern.
 
-If a skipped (unknown) blob is referenced by a reachable binding's graph, that
-binding is demoted to an error naming the missing blob type; the rest of the
-load proceeds.
+On **dump**, `Serialize` may fail (the object holds a non-serializable live
+resource — an open socket, a GPU handle). This is the mirror of unknown-object-
+on-load: the referencing binding is demoted to an error naming the object, and
+the rest of the dump proceeds.
+
+#### Garbage collection
+
+Foreign objects live outside `Cell_Array`, so they never move — the collector
+tracks *slot liveness* and forwards their *children*. The registry is a vector
+with a per-slot mark flag:
+
+- **Marking is inline in the copy/scan closure, not a post-pass.** When the scan
+  reaches a foreign payload in a live cell: if the slot is already marked, skip
+  it (this breaks cycles, including foreign -> cell -> foreign); otherwise set the
+  mark and `Visit` the object with the forwarding `Process`, so its children enter
+  the copy closure. A child may be the only reference keeping a cell alive, so
+  this must happen *during* transitive closure.
+- **Freeing is the post-pass sweep.** After the closure, walk the registry: any
+  slot allocated but unmarked this cycle has no live reference — call `Free` and
+  clear the slot (reusable). This gives Free-exactly-once for free (cleared slots
+  are never revisited) and covers cycles and unreachable islands. An epoch
+  counter avoids a separate flag-reset pass.
+- **Shutdown** sweeps and `Free`s every remaining live foreign object; GC
+  collection alone does not guarantee all are freed.
+
+Generational collection (were it adopted; the ADR 0008 design is rejected) would
+break the naive sweep — a minor GC does not scan old space, so a foreign object
+referenced only from old space would be wrongly freed, and old->foreign /
+foreign->young edges would need remembered-set treatment. If a generational
+collector lands, the simplest safe rule is to pin all foreign objects as old.
+
+#### The fresh-bind hazard
+
+Between `Bind_Object` returning an object and that object being stored into a
+rooted cell, the object is reachable only from Ada locals — invisible to the
+collector. A GC in that window (e.g. triggered by the very `Append` that installs
+it) would `Free` it: a use-after-free. The `Install` path sidesteps this by
+forbidding GC mid-build ([skit-handles.ads](../../src/skit-handles.ads)), but
+that does not generalize to arbitrary host code.
+
+**Mitigation — pin on bind.** `Bind_Object` sets a `pinned` flag on the slot;
+pinned slots are unconditional GC roots, marked live regardless of references.
+The host calls `Unpin (obj)` once the object is safely stored in a rooted cell.
+GC never frees a pinned slot, so bind/`Append` may interleave freely. The failure
+mode of forgetting to unpin is a *leak* (still reclaimed by the shutdown sweep),
+never a use-after-free.
 
 ### One consistent principle
 
 Across the whole format, **skit frames and routes by name; the host owns the
 payload.** Cross-module imports resolve by export name; primitives resolve by
-name through the host; annotations are opaque length-framed records; blobs
-dispatch by string type-tag. No cross-boundary identity is a build-specific
+name through the host; annotations are opaque length-framed records; foreign
+objects dispatch by string class name. No cross-boundary identity is a build-specific
 integer index — the sole exception being VM-fixed combinators (payloads 1..9,
 plus `Suspension`), pinned by the header's version fields.
 
@@ -281,10 +383,12 @@ plus `Suspension`), pinned by the header's version fields.
 
 To be recorded once the format is implemented. The public interface in
 [skit.ads](../../src/skit.ads) is expected to stay stable; new surface is
-additive — a blob `Serialize` method (on whatever host-object interface plays
-the role this ADR calls `Skit.Interfaces`), a blob-type registry on the machine,
-and image read/write entry points. Name resolution reuses the existing name →
-object binding (`Bind`/`Lookup`); no resolver API is added.
+additive — a `Foreign_Object_Interface` (`Class_Name`/`Serialize`/`Visit`/
+`Free`/`Image`), a per-machine object-class factory registry keyed by class
+name, `Bind_Object`/`Unpin` and a foreign-object registry with a mark flag,
+collector integration (inline marking + Free sweep), and image read/write entry
+points. Name resolution reuses the existing name → object binding
+(`Bind`/`Lookup`); no resolver API is added.
 Compiler-side, `foreign import` references must be emitted as named import slots
 rather than baked opcode objects (decision B). This ADR depends
 on ADR 0001 only through the header's word-size/tag-layout fields, which exist
@@ -296,8 +400,13 @@ and `Skit.Interfaces` named in Context/Decision **do not exist yet**. Today the
 environment is a payload-keyed `Environment_Maps` inside
 [skit-machines.ads](../../src/skit-machines.ads), fronted by a `String → Object`
 intern layer (`Map`/`Vector`) in [skit-handles.ads](../../src/skit-handles.ads);
-the heap is [skit-memory.ads](../../src/skit-memory.ads). There is **no blob
-storage of any kind** — the entire blob mechanism (`Serialize`, factory
-registry, a `Blobs` map, unknown-tag skip) is greenfield. "Resolution order step
-2 (`Environment.Lookup`)" maps concretely onto `Handle.Lookup (Name : String)`.
+the heap is [skit-memory.ads](../../src/skit-memory.ads). There is **no foreign-
+object storage of any kind** — the whole mechanism (`Foreign_Object_Interface`,
+factory registry, the registry vector + mark flag, collector integration,
+unknown-class skip) is greenfield, as is the `Foreign_Object_Payload` range and
+`Is_Foreign_Object` predicate in [skit.ads](../../src/skit.ads). The existing
+`User_Data_Interface` ([skit.ads](../../src/skit.ads)) is a *different* thing (a
+single per-machine host context for primitive callbacks), not to be confused with
+the many-instances `Foreign_Object_Interface`. "Resolution order step 2
+(`Environment.Lookup`)" maps concretely onto `Handle.Lookup (Name : String)`.
 These names should be reconciled when the format is implemented.
