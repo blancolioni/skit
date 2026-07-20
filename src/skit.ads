@@ -26,10 +26,6 @@ package Skit is
    function Is_Symbol (X : Object) return Boolean;
    function Is_Undefined (X : Object) return Boolean;
 
-   type Variable_Index is range 1 .. 999;
-
-   function To_Variable_Object (Index : Variable_Index) return Object;
-
    type User_Data_Interface is limited interface;
 
    type Argument_Mode is (Strict, Lazy);
@@ -117,10 +113,6 @@ private
 
    function Is_Float (X : Object) return Boolean
    is (X.Tag = Float_Object);
-
-   function To_Variable_Object (Index : Variable_Index) return Object
-   is (Object_Payload (Index) + Primitive_Variable_Payload'First,
-       Primitive_Object);
 
    function Is_Primitive (O : Object) return Boolean
    is (O.Tag = Primitive_Object);
