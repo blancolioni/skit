@@ -4,6 +4,11 @@ with Skit.Debug;
 
 package body Skit.Machines is
 
+   --  See the spec: silence the "Pre not enforced on inlined subprogram"
+   --  warning for the inlined subprograms declared in this body too.
+   pragma Warnings
+     (Off, "aspect ""Pre"" not enforced on inlined subprogram*");
+
    Trace      : constant Boolean := False;
    Instrument : constant Boolean := False;
 
