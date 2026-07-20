@@ -1,5 +1,12 @@
 private package Skit.Memory is
 
+   --  These accessors are Inline_Always with a documented Pre. With
+   --  assertions enabled the inlined body cannot carry the precondition
+   --  check, so GNAT warns it is "not enforced"; the Pre is kept for
+   --  documentation and static analysis, and the warning is silenced here.
+   pragma Warnings
+     (Off, "aspect ""Pre"" not enforced on inlined subprogram*");
+
    type Instance (Last : Cell_Address) is limited private;
 
    function Left
