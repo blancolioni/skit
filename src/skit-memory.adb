@@ -213,6 +213,7 @@ package body Skit.Memory is
    begin
       This.Top        := To_Space + Space_Size;
       This.Free       := To_Space;
+      This.Scan       := To_Space;
       This.From_Space := From_Space;
       This.To_Space   := To_Space;
       This.Space_Size := Space_Size;

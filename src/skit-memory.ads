@@ -2,29 +2,42 @@ private package Skit.Memory is
 
    type Instance (Last : Cell_Address) is limited private;
 
+   --  Structural invariant of the two-space heap: the semispaces partition
+   --  Core, Top/Free/Scan sit inside the current to-space, and Space_Size is
+   --  half the arena. Asserted around every collection so a corrupt layout
+   --  (Free past Top, a stale semispace base) is caught at the GC boundary
+   --  rather than as a downstream wild index. Static_Top is excluded
+   --  deliberately: mid-collection it names a from-space address.
+   function Valid_Heap (This : Instance) return Boolean
+     with Ghost;
+
    function Left
      (This : Instance;
       App  : Object)
       return Object
-     with Inline_Always, Pre => Is_Application (App);
+     with Inline_Always,
+          Pre => Is_Application (App) and then App.Payload <= This.Last;
 
    function Right
      (This : Instance;
       App  : Object)
       return Object
-     with Inline_Always, Pre => Is_Application (App);
+     with Inline_Always,
+          Pre => Is_Application (App) and then App.Payload <= This.Last;
 
    procedure Set_Left
      (This : in out Instance;
       App  : Object;
       To   : Object)
-     with Inline_Always, Pre => Is_Application (App);
+     with Inline_Always,
+          Pre => Is_Application (App) and then App.Payload <= This.Last;
 
    procedure Set_Right
      (This : in out Instance;
       App  : Object;
       To   : Object)
-     with Inline_Always, Pre => Is_Application (App);
+     with Inline_Always,
+          Pre => Is_Application (App) and then App.Payload <= This.Last;
 
    function Is_Full
      (This : Instance)
@@ -39,16 +52,22 @@ private package Skit.Memory is
      with Inline_Always, Pre => not Is_Full (This);
 
    procedure Initialize (This : in out Instance)
-     with Post => not Is_Full (This);
+     with Pre  => This.Last >= 1,
+          Post => not Is_Full (This) and then Valid_Heap (This);
 
-   procedure Before_GC (This : in out Instance);
-   procedure After_GC (This : in out Instance);
+   procedure Before_GC (This : in out Instance)
+     with Pre => Valid_Heap (This), Post => Valid_Heap (This);
+
+   procedure After_GC (This : in out Instance)
+     with Pre => Valid_Heap (This), Post => Valid_Heap (This);
 
    procedure Mark
      (This : in out Instance;
-      Root : in out Object);
+      Root : in out Object)
+     with Pre => Valid_Heap (This), Post => Valid_Heap (This);
 
-   procedure GC (This : in out Instance);
+   procedure GC (This : in out Instance)
+     with Pre => Valid_Heap (This), Post => Valid_Heap (This);
 
 private
 
@@ -82,5 +101,15 @@ private
          Epoch_Remembered  : Natural := 0;  --  in the current inter-GC epoch
          Max_Remembered    : Natural := 0;  --  max epoch count seen
       end record;
+
+   function Valid_Heap (This : Instance) return Boolean
+   is (This.Space_Size = (This.Last + 1) / 2
+       and then
+         ((This.To_Space = 0 and then This.From_Space = This.Space_Size)
+            or else
+          (This.To_Space = This.Space_Size and then This.From_Space = 0))
+       and then This.Top = This.To_Space + This.Space_Size
+       and then This.Free in This.To_Space .. This.Top
+       and then This.Scan in This.To_Space .. This.Free);
 
 end Skit.Memory;
