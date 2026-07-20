@@ -1,7 +1,7 @@
 # ADR 0002: External Skit Representation (Module Image Format)
 
-- **Status:** Proposed
-- **Date:** 2026-07-04
+- **Status:** Accepted
+- **Date:** 2026-07-04 (open questions resolved 2026-07-20)
 - **Deciders:** Fraser Wilson
 
 ## Context
@@ -70,13 +70,21 @@ object tag and payload range:
 | Internal cell ref | `Application` payload = local node id | Add the module's assigned base. Uniform; needs no per-entry table. |
 | Named import | Slot holds a sentinel (`Undefined`); listed in the reloc table | Resolve the import name (see resolution order below); write the resolved object into the slot. |
 | Symbol atom | `Primitive` payload in the interned-symbol range (4096+) | Re-intern by name into the merged environment; remap old id to new id. |
-| VM-fixed combinator | `Primitive` 1..13 (`S`,`K`,`I`,`B`,`C`, …) | Left untouched. Pinned by the header's format/VM version. |
+| VM-fixed combinator | `Primitive` payload 1..9 (`S`,`K`,`I`,`C`,`B`,`S′`,`B*`,`C′`,`Y`), plus `Suspension` (11) | Left untouched. Pinned by the header's format/VM version. |
 | Integer / Float | `Integer`, `Float` | Left untouched (immediate). |
 
 Internal refs relocate *implicitly* (the loader walks all cells and offsets
 every `Application` payload), so only named imports need an explicit relocation
 table — this is why the table is kept **separate** from the cells rather than
 inlined.
+
+Of the low, VM-fixed `Primitive` payloads, exactly two are *not* in the
+untouched set: `Undefined` (10) is the import sentinel — it is the "named
+import" row above, patched not preserved; and `Nil` (0) never appears in a
+valid cell (`Machine.Append` forbids `Nil` on either side). Payloads 12..13 are
+currently unused. The pinned set the header's VM version guarantees is therefore
+`1..9` (the combinators, `Skit.Combinator_Payload`) plus `Suspension` (11); see
+[skit.ads](../../src/skit.ads).
 
 ### Primitives are named imports, symbolic from compile time
 
@@ -115,8 +123,8 @@ Each import name is resolved, in order:
 
 Both steps reduce to a name lookup against a binding map — sibling exports are a
 per-load overlay, the environment is the standing set. VM-fixed combinators
-(1..13) are the *only* primitives dumped literally, and only because the header
-pins them to a VM version.
+(payloads 1..9, plus `Suspension`) are the *only* primitives dumped literally,
+and only because the header pins them to a VM version.
 
 ### Module container sections
 
@@ -151,6 +159,19 @@ Two passes (rather than a topological load order) let modules reference each
 other mutually: every export is registered in pass 1 before any import is
 resolved in pass 2. An import that resolves to nothing is a hard error naming the
 symbol.
+
+**Re-dump preserves import provenance via the reloc table, not the graph.**
+Decision B keeps first-emit cells clean (import slots hold the `Undefined`
+sentinel), but a heap snapshotted *after* a load-and-eval no longer is: pass 2
+wrote the resolved objects — including build-specific `Primitive_Function`
+opcodes — back into those slots. Re-inspecting the object to recover its name
+would be exactly the rejected reverse-map (decision A). Instead the
+**import-reloc table is authoritative and persists**: a slot once listed as a
+named import stays one across every re-dump. The dumper re-emits the sentinel for
+any cell carried in the inherited-and-merged reloc table rather than looking at
+what pass 2 left there. Provenance travels in the table; the object graph is
+never consulted to un-bake a primitive. This is what makes "fully named, no
+reverse map" (see the primitives decision) survive re-dump.
 
 ### Blobs: host-owned, skit-routed
 
@@ -197,35 +218,83 @@ Across the whole format, **skit frames and routes by name; the host owns the
 payload.** Cross-module imports resolve by export name; primitives resolve by
 name through the host; annotations are opaque length-framed records; blobs
 dispatch by string type-tag. No cross-boundary identity is a build-specific
-integer index — the sole exception being VM-fixed combinators (1..13), pinned by
-the header's version fields.
+integer index — the sole exception being VM-fixed combinators (payloads 1..9,
+plus `Suspension`), pinned by the header's version fields.
 
-## Open questions
+## Resolved questions
 
-- **Duplicate export** across two loaded modules: hard error, or last-wins?
-- **Interface fingerprint contents**: export names only, or names + annotated
-  types? Including types catches more stale links but couples the fingerprint to
-  Leander's type encoding.
-- **Annotation keying**: key on export *name* or export *node id*? Name survives
-  export dedup/renumbering; node id does not — leaning name.
-- **Symbol-atom vs export namespace**: confirm runtime symbol atoms and exported
-  binding names share, or are kept in, distinct name spaces on re-intern.
-- **Opcode range (64..255) in dumps**: fully retired in favour of named
-  host-resolved imports (decision B applied uniformly), or kept literal for a
-  hot core set pinned by the VM version like the 1..13 combinators? Leaning
-  fully named, with only 1..13 baked.
-- **Streaming large blobs**: current design materializes a blob's bytes whole.
-  If a genuinely large blob appears, revisit with a counting sub-stream and a
-  back-patched length slot (incremental + still skippable).
+- **Duplicate export** across two loaded modules — **hard error**, keyed on
+  `(source module, export name)`. Distinct sources exporting the same name is a
+  link-time collision naming both modules; silent last-wins would make link order
+  semantically significant and mask real clashes (cf. Haskell's ambiguous
+  import). *Identical* provenance (idempotent reload of the same module, or
+  decision B re-resolving a primitive on its own compile-run) is last-wins, not
+  an error. An explicit per-import `override` may be added later for intentional
+  prelude replacement. Note the current `Machine.Bind` is silent last-wins
+  ([skit-machines.adb](../../src/skit-machines.adb)); the linker enforces this
+  policy above that primitive, which stays override-by-default for the host.
+
+- **Interface fingerprint contents** — **export names + raw annotation bytes**,
+  hashed opaquely. Names-only would accept an unsound link where a producer's
+  export changed type but kept its name. Skit stays type-agnostic by hashing the
+  *bytes* of the already-opaque annotation section (§6), never parsing them:
+  `H(sorted[(name, annotation_bytes)])`. Sorting removes export-order
+  sensitivity. Cost: the fingerprint churns on cosmetic annotation-encoding
+  changes even when the type is semantically unchanged — acceptable given a
+  stable annotation encoding.
+
+- **Annotation keying** — **export name** (confirmed). Node ids are offset in
+  pass 1 and renumbered on export dedup; names are the stable cross-boundary
+  identity the whole format rests on. Export names are already unique per module.
+
+- **Symbol-atom vs export namespace** — **shared**, and already so by
+  construction. In [skit-handles.adb](../../src/skit-handles.adb), `Bind (Name :
+  String)` and symbol interning both route through one `To_Symbol_Object` → the
+  same `Map`/`Vector`, the same `Primitive_Variable_Payload` range. A runtime
+  symbol atom `foo` and the exported binding `foo` are the same object and must
+  collapse on re-intern, or a symbol used in code and the root it names would
+  split identity. The former overlap risk (compiler `To_Variable_Object` sharing
+  the symbol range) is **gone**: `To_Variable_Object`/`Variable_Index` were
+  removed from [skit.ads](../../src/skit.ads) — raw lambda variables are never
+  written to Skit, and the representation can no longer express them.
+
+- **Opcode range (64..4095) in dumps** — **fully retired to named imports**;
+  only the VM-fixed combinators (1..9, plus `Suspension`) are baked, pinned by
+  the header. `Primitive_Function` payloads are `64 + slot in this build's Prims
+  vector` — a registration-order-dependent, build-specific index, exactly what
+  the naming-over-numbering driver forbids. Resolution is load-time only, so
+  "keep a hot core literal" buys no runtime speed. For this to survive re-dump,
+  see the reloc-table provenance rule under **Two-pass load** — provenance rides
+  the persistent reloc table, so no reverse map is ever needed.
+
+- **Streaming large blobs** — **deferred, but the format reserves it now.**
+  Materializing whole is fine until a genuinely large blob exists (YAGNI). The
+  length frame is sized for it today (64-bit / varint, documented as
+  back-patchable) so a future counting-sub-stream writer just back-patches the
+  slot — no format-version bump. A narrow 16/32-bit length would force a breaking
+  change later, so it is avoided.
 
 ## Consequences
 
 To be recorded once the format is implemented. The public interface in
 [skit.ads](../../src/skit.ads) is expected to stay stable; new surface is
-additive — a blob `Serialize` method on `Skit.Interfaces`, a blob-type registry
-on the machine/environment, and image read/write entry points. Name resolution
-reuses the existing `Skit.Environment` `Bind`/`Lookup`; no resolver API is added.
+additive — a blob `Serialize` method (on whatever host-object interface plays
+the role this ADR calls `Skit.Interfaces`), a blob-type registry on the machine,
+and image read/write entry points. Name resolution reuses the existing name →
+object binding (`Bind`/`Lookup`); no resolver API is added.
 Compiler-side, `foreign import` references must be emitted as named import slots
 rather than baked opcode objects (decision B). This ADR depends
 on ADR 0001 only through the header's word-size/tag-layout fields, which exist
 precisely so the two decisions can move independently.
+
+**Naming note — this ADR describes intended state, not current code.** The
+`Skit.Environment` package with `Bindings`/`Blobs` maps, `skit-impl-memory.ads`,
+and `Skit.Interfaces` named in Context/Decision **do not exist yet**. Today the
+environment is a payload-keyed `Environment_Maps` inside
+[skit-machines.ads](../../src/skit-machines.ads), fronted by a `String → Object`
+intern layer (`Map`/`Vector`) in [skit-handles.ads](../../src/skit-handles.ads);
+the heap is [skit-memory.ads](../../src/skit-memory.ads). There is **no blob
+storage of any kind** — the entire blob mechanism (`Serialize`, factory
+registry, a `Blobs` map, unknown-tag skip) is greenfield. "Resolution order step
+2 (`Environment.Lookup`)" maps concretely onto `Handle.Lookup (Name : String)`.
+These names should be reconciled when the format is implemented.
