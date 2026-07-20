@@ -70,17 +70,17 @@ package body Skit.Memory is
    -- Append --
    ------------
 
-   function Append
-     (This   : in out Instance;
-      Left   : Object;
-      Right  : Object)
-      return Object
+   procedure Append
+     (This    : in out Instance;
+      Left    : Object;
+      Right   : Object;
+      New_App : out Object)
    is
    begin
       This.Core (This.Free) := (Left, Right);
       This.Free := @ + 1;
       This.Alloc_Count := @ + 1;
-      return (This.Free - 1, Application_Object);
+      New_App := (This.Free - 1, Application_Object);
    end Append;
 
    ---------------

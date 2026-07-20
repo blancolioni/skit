@@ -46,7 +46,10 @@ package body Skit.Machines is
          raise Constraint_Error with
            "machine memory overflow in Append";
       end if;
-      return Skit.Memory.Append (This.Core, Left, Right);
+
+      return New_App : Object do
+         Skit.Memory.Append (This.Core, Left, Right, New_App);
+      end return;
    end Append;
 
    -----------
@@ -71,6 +74,7 @@ package body Skit.Machines is
       Left, Right : Object)
       return Object
    is
+      New_App : Object;
    begin
       if Instrument then
          This.Alloc_Count := @ + 1;
@@ -85,11 +89,12 @@ package body Skit.Machines is
                raise Storage_Error with "out of memory";
             end if;
 
-            return Skit.Memory.Append (This.Core, Xs (1), Xs (2));
+            Skit.Memory.Append (This.Core, Xs (1), Xs (2), New_App);
          end;
       else
-         return Skit.Memory.Append (This.Core, Left, Right);
+         Skit.Memory.Append (This.Core, Left, Right, New_App);
       end if;
+      return New_App;
    end Apply;
 
    ----------

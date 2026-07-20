@@ -1,4 +1,6 @@
-private package Skit.Memory is
+private package Skit.Memory
+  with SPARK_Mode
+is
 
    type Instance (Last : Cell_Address) is limited private;
 
@@ -44,11 +46,11 @@ private package Skit.Memory is
       return Boolean
      with Inline_Always;
 
-   function Append
-     (This   : in out Instance;
-      Left   : Object;
-      Right  : Object)
-      return Object
+   procedure Append
+     (This    : in out Instance;
+      Left    : Object;
+      Right   : Object;
+      New_App : out Object)
      with Inline_Always, Pre => not Is_Full (This);
 
    procedure Initialize (This : in out Instance)

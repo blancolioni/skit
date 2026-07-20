@@ -21,3 +21,6 @@ development.contracts = "yes"
 
 [[depends-on]]
 resources = "~0.1.0"
+
+[[depends-on]]
+gnatprove = "^16.1.0"
