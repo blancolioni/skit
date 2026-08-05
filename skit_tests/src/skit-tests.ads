@@ -40,6 +40,11 @@ package Skit.Tests is
      (Source   : String;
       Expected : String);
 
+   procedure Test_Foreign_Objects;
+   --  Exercise the foreign-object registry and its GC: pinning, live-cell
+   --  discovery, bare-root marking, child forwarding, sweeping the
+   --  unreachable, and slot reuse.
+
    procedure Report;
 
 private

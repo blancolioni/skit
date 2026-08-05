@@ -202,6 +202,26 @@ package body Skit.Memory is
       end loop;
    end GC;
 
+   ---------------
+   -- Live_Cell --
+   ---------------
+
+   function Live_Cell_Count (This : Instance) return Natural
+   is (Natural (This.Free - This.To_Space));
+
+   procedure Live_Cell
+     (This  : Instance;
+      Index : Natural;
+      Left  : out Object;
+      Right : out Object)
+   is
+      Address : constant Cell_Address :=
+                  This.To_Space + Cell_Address (Index);
+   begin
+      Left  := This.Core (Address).Left;
+      Right := This.Core (Address).Right;
+   end Live_Cell;
+
    ----------------
    -- Initialize --
    ----------------
