@@ -736,23 +736,20 @@ package body Skit.Tests is
              Freed (1) and then Freed (3) and then Freed (4));
    end Test_Foreign_Objects;
 
-   -----------------
-   -- Test_Images --
-   -----------------
+   -------------------------
+   -- Test_Foreign_Nested --
+   -------------------------
 
-   procedure Test_Images is
-      use Ada.Strings.Unbounded;
-
-      Path : constant String := "test_image.skix";
-
-      Hw : constant Skit.Handles.Handle :=
-             Skit.Handles.New_Handle (Core_Size => 1024);
-      Hr : constant Skit.Handles.Handle :=
-             Skit.Handles.New_Handle (Core_Size => 1024);
+   procedure Test_Foreign_Nested is
 
       function No_Resolve (Name : String) return Object;
 
       procedure Check (Name : String; Cond : Boolean);
+
+      procedure Churn (H : Skit.Handles.Handle);
+
+      H : constant Skit.Handles.Handle :=
+            Skit.Handles.New_Handle (Core_Size => 1024);
 
       ----------------
       -- No_Resolve --
@@ -782,40 +779,276 @@ package body Skit.Tests is
          end if;
       end Check;
 
-      --  The graph K 42 99 == App (App (K, 42), 99): two nested cells, an
-      --  integer at each level and a combinator at the bottom.
-      Graph : constant Skit.Terms.Term :=
-                Skit.Terms.Apply
-                  (Skit.Terms.Apply
-                     (Skit.Terms.Combinator (Skit.K),
-                      Skit.Terms.Const (42)),
-                   Skit.Terms.Const (99));
+      -----------
+      -- Churn --
+      -----------
 
-      Root : constant Object :=
-               Hw.Install (Skit.Compiler.Compile (Graph),
-                           No_Resolve'Access);
+      --  Allocate and discard until several collections have run.
+      procedure Churn (H : Skit.Handles.Handle) is
+      begin
+         H.Install
+           (Skit.Compiler.Compile (Skit.Terms.Const (0)), No_Resolve'Access);
+         for I in 1 .. 4000 loop
+            H.Push (To_Object (I));
+            declare
+               Discard : constant Object := H.Pop;
+               pragma Unreferenced (Discard);
+            begin
+               null;
+            end;
+         end loop;
+      end Churn;
+
+      --  Inner box, reachable only through the outer box's child cell.
+      Inner    : constant Foreign_Reference :=
+                   new Box'(N => 0, Id => 5, Children => []);
+      Obj_Inner : constant Object := H.Bind_Object (Inner);
+
+      --  A cell App (Obj_Inner, 0) held as the outer box's child.
+      Child : constant Object :=
+                H.Install
+                  (Skit.Compiler.Compile
+                     (Skit.Terms.Apply
+                        (Skit.Terms.Primitive (Obj_Inner),
+                         Skit.Terms.Const (0))),
+                   No_Resolve'Access);
+
+      Outer     : constant Foreign_Reference :=
+                    new Box'(N => 1, Id => 6, Children => [Child]);
+      Obj_Outer : constant Object := H.Bind_Object (Outer);
    begin
-      Hw.Bind ("root", Root);
-      Skit.Handles.Images.Write
-        (Hw, Path, [1 => To_Unbounded_String ("root")]);
+      --  Keep the outer box via a bare root; the inner box is reachable only
+      --  through the outer box's child cell, so only the discovery fixpoint
+      --  (a later round, after the child is forwarded) can find it.
+      H.Bind ("outer", Obj_Outer);
+      H.Unpin (Obj_Outer);
+      H.Unpin (Obj_Inner);
 
-      Skit.Handles.Images.Read (Hr, Path);
+      Churn (H);
+      Check ("foreign nested: outer survives", not Freed (6));
+      Check ("foreign nested: inner survives via nesting", not Freed (5));
+
+      --  Drop the outer box; both must now be collected.
+      H.Bind ("outer", To_Object (0));
+      Churn (H);
+      Check ("foreign nested: outer collected when dropped", Freed (6));
+      Check ("foreign nested: inner collected transitively", Freed (5));
+   end Test_Foreign_Nested;
+
+   -----------------
+   -- Test_Images --
+   -----------------
+
+   procedure Test_Images is
+      use Ada.Strings.Unbounded;
+      package Img renames Skit.Handles.Images;
+      package T renames Skit.Terms;
+
+      Path : constant String := "test_image.skix";
+
+      function No_Resolve (Name : String) return Object;
+
+      procedure Check (Name : String; Cond : Boolean);
+
+      function New_Machine return Skit.Handles.Handle
+      is (Skit.Handles.New_Handle (Core_Size => 1024));
+
+      function U (S : String) return Unbounded_String
+        renames To_Unbounded_String;
+
+      ----------------
+      -- No_Resolve --
+      ----------------
+
+      function No_Resolve (Name : String) return Object is
+         pragma Unreferenced (Name);
+      begin
+         return Undefined;
+      end No_Resolve;
+
+      -----------
+      -- Check --
+      -----------
+
+      procedure Check (Name : String; Cond : Boolean) is
+      begin
+         Total := @ + 1;
+         Put (Name, 38);
+         Ada.Text_IO.Set_Col (40);
+         if Cond then
+            Pass := @ + 1;
+            Ada.Text_IO.Put_Line ("PASS");
+         else
+            Fail := @ + 1;
+            Ada.Text_IO.Put_Line ("FAIL");
+         end if;
+      end Check;
+
+   begin
+      --  Structure: K 42 99 == App (App (K, 42), 99).  Two nested cells, an
+      --  integer at each level and a combinator at the bottom.
+      declare
+         Hw   : constant Skit.Handles.Handle := New_Machine;
+         Hr   : constant Skit.Handles.Handle := New_Machine;
+         Root : constant Object :=
+                  Hw.Install
+                    (Skit.Compiler.Compile
+                       (T.Apply
+                          (T.Apply (T.Combinator (Skit.K), T.Const (42)),
+                           T.Const (99))),
+                     No_Resolve'Access);
+      begin
+         Hw.Bind ("root", Root);
+         Img.Write (Hw, Path, [1 => U ("root")]);
+         Img.Read (Hr, Path);
+         declare
+            RB    : constant Object := Hr.Lookup ("root");
+            Inner : constant Object :=
+                      (if Is_Application (RB) then Hr.Left (RB)
+                       else Undefined);
+         begin
+            Check ("image: export is an application", Is_Application (RB));
+            Check ("image: outer right leaf preserved",
+                   Is_Application (RB)
+                   and then Hr.Right (RB) = To_Object (99));
+            Check ("image: inner node is an application",
+                   Is_Application (Inner));
+            Check ("image: combinator preserved",
+                   Is_Application (Inner) and then Hr.Left (Inner) = Skit.K);
+            Check ("image: inner int leaf preserved",
+                   Is_Application (Inner)
+                   and then Hr.Right (Inner) = To_Object (42));
+         end;
+      end;
+
+      --  Semantic round-trip: S K K 42 reduces to 42 after a reload into a
+      --  fresh machine.
+      declare
+         Hw : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+
+         function From_Reader (Name : String) return Object
+         is (Hr.Lookup (Name));
+
+         Root : constant Object :=
+                  Hw.Install
+                    (Skit.Compiler.Compile
+                       (T.Apply
+                          (T.Apply
+                             (T.Apply (T.Combinator (Skit.S),
+                                       T.Combinator (Skit.K)),
+                              T.Combinator (Skit.K)),
+                           T.Const (42))),
+                     No_Resolve'Access);
+      begin
+         Hw.Bind ("f", Root);
+         Img.Write (Hw, Path, [1 => U ("f")]);
+         Img.Read (Hr, Path);
+         Hr.Install
+           (Skit.Compiler.Compile (T.Symbol ("f")), From_Reader'Access);
+         Hr.Evaluate;
+         Check ("image: evaluates to same value after round-trip",
+                Hr.Pop = To_Object (42));
+      end;
+
+      --  Cyclic graph: Y K evaluates to a single self-referential cell
+      --  App (K, self); the writer must break the cycle and the reader must
+      --  re-tie the self reference.
+      declare
+         Hw : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+      begin
+         Hw.Install
+           (Skit.Compiler.Compile
+              (T.Apply (T.Combinator (Skit.Y), T.Combinator (Skit.K))),
+            No_Resolve'Access);
+         Hw.Evaluate;
+         Hw.Bind ("cyc", Hw.Pop);
+         Img.Write (Hw, Path, [1 => U ("cyc")]);
+         Img.Read (Hr, Path);
+         declare
+            --  Y K evaluates to  W = App (K, X),  X = App (K, X):  X is a
+            --  self-referential cell (Right (X) = X).  The writer must break
+            --  that self-loop and the reader must re-tie it, so following
+            --  Right into X and again stays at X.
+            CB : constant Object := Hr.Lookup ("cyc");
+            X  : constant Object :=
+                   (if Is_Application (CB) then Hr.Right (CB) else Undefined);
+         begin
+            Check ("image: self-referential cell preserved",
+                   Is_Application (CB)
+                   and then Hr.Left (CB) = Skit.K
+                   and then Is_Application (X)
+                   and then Hr.Left (X) = Skit.K
+                   and then Hr.Right (X) = X);
+         end;
+      end;
+
+      --  Several exports, including bare (non-application) immediates.
+      declare
+         Hw : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+      begin
+         Hw.Bind ("n", To_Object (7));
+         Hw.Bind ("c", Skit.K);
+         Img.Write (Hw, Path, [U ("n"), U ("c")]);
+         Img.Read (Hr, Path);
+         Check ("image: bare integer export", Hr.Lookup ("n") = To_Object (7));
+         Check ("image: bare combinator export", Hr.Lookup ("c") = Skit.K);
+      end;
+
+      --  Negative integer and float leaves.
+      declare
+         Hw   : constant Skit.Handles.Handle := New_Machine;
+         Hr   : constant Skit.Handles.Handle := New_Machine;
+         Root : constant Object :=
+                  Hw.Install
+                    (Skit.Compiler.Compile
+                       (T.Apply
+                          (T.Apply (T.Combinator (Skit.K), T.Const (-5)),
+                           T.Const (Long_Float'(0.5)))),
+                     No_Resolve'Access);
+      begin
+         Hw.Bind ("g", Root);
+         Img.Write (Hw, Path, [1 => U ("g")]);
+         Img.Read (Hr, Path);
+         declare
+            GB : constant Object := Hr.Lookup ("g");
+         begin
+            Check ("image: negative int leaf",
+                   Is_Application (GB)
+                   and then Is_Application (Hr.Left (GB))
+                   and then Hr.Right (Hr.Left (GB)) = To_Object (-5));
+            Check ("image: float leaf",
+                   Is_Application (GB)
+                   and then Hr.Right (GB) = To_Object (Long_Float'(0.5)));
+         end;
+      end;
+
+      --  Errors: an unknown export, and an object the MVP cannot serialize.
+      declare
+         Hw     : constant Skit.Handles.Handle := New_Machine;
+         Caught : Boolean := False;
+      begin
+         begin
+            Img.Write (Hw, Path, [1 => U ("does-not-exist")]);
+         exception
+            when Img.Image_Error => Caught := True;
+         end;
+         Check ("image: unknown export rejected", Caught);
+      end;
 
       declare
-         RB    : constant Object := Hr.Lookup ("root");
-         Inner : constant Object :=
-                   (if Is_Application (RB) then Hr.Left (RB) else Undefined);
+         Hw     : constant Skit.Handles.Handle := New_Machine;
+         Caught : Boolean := False;
       begin
-         Check ("image: export is an application", Is_Application (RB));
-         Check ("image: outer right leaf preserved",
-                Is_Application (RB) and then Hr.Right (RB) = To_Object (99));
-         Check ("image: inner node is an application",
-                Is_Application (Inner));
-         Check ("image: combinator preserved",
-                Is_Application (Inner) and then Hr.Left (Inner) = Skit.K);
-         Check ("image: inner int leaf preserved",
-                Is_Application (Inner)
-                and then Hr.Right (Inner) = To_Object (42));
+         Hw.Bind ("p", Hw.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+         begin
+            Img.Write (Hw, Path, [1 => U ("p")]);
+         exception
+            when Img.Image_Error => Caught := True;
+         end;
+         Check ("image: primitive function rejected", Caught);
       end;
 
       if Ada.Directories.Exists (Path) then

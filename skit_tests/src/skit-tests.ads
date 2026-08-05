@@ -45,6 +45,11 @@ package Skit.Tests is
    --  discovery, bare-root marking, child forwarding, sweeping the
    --  unreachable, and slot reuse.
 
+   procedure Test_Foreign_Nested;
+   --  A foreign object reachable only through another object's child cell must
+   --  be found by the discovery fixpoint, and collected once the outer object
+   --  becomes unreachable.
+
    procedure Test_Images;
    --  Round-trip a module image: write a graph to disk, read it back into a
    --  fresh machine, and check its structure survived relocation.
