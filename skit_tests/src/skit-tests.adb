@@ -1095,6 +1095,37 @@ package body Skit.Tests is
          Check ("image: unresolved import rejected", Caught);
       end;
 
+      --  Symbol atoms: a graph carrying an (unresolved) symbol re-interns the
+      --  symbol by name into the reader -- its object is the reader's own
+      --  symbol for that name, not the writer's.
+      declare
+         Hw : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+
+         --  Resolve leaves references as symbols rather than values.
+         function As_Symbol (Name : String) return Object
+         is (Hw.Intern_Symbol (Name));
+
+         Root : constant Object :=
+                  Hw.Install
+                    (Skit.Compiler.Compile
+                       (T.Apply (T.Symbol ("foo"), T.Const (1))),
+                     As_Symbol'Access);
+      begin
+         Hw.Bind ("g", Root);
+         Img.Write (Hw, Path, [1 => U ("g")]);
+         Img.Read (Hr, Path);
+         declare
+            GB : constant Object := Hr.Lookup ("g");
+         begin
+            Check ("image: symbol re-interned by name",
+                   Is_Application (GB)
+                   and then Is_Symbol (Hr.Left (GB))
+                   and then Hr.Left (GB) = Hr.Intern_Symbol ("foo")
+                   and then Hr.Right (GB) = To_Object (1));
+         end;
+      end;
+
       if Ada.Directories.Exists (Path) then
          Ada.Directories.Delete_File (Path);
       end if;

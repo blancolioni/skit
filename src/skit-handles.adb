@@ -299,6 +299,19 @@ package body Skit.Handles is
       end if;
    end To_Symbol_Object;
 
+   -------------------
+   -- Intern_Symbol --
+   -------------------
+
+   function Intern_Symbol
+     (This : Handle'Class;
+      Name : String)
+      return Object
+   is
+   begin
+      return This.To_Symbol_Object (Name);
+   end Intern_Symbol;
+
    -----------
    -- Write --
    -----------

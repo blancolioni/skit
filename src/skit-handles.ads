@@ -95,6 +95,13 @@ package Skit.Handles is
       Name : String)
       return Object;
 
+   function Intern_Symbol
+     (This : Handle'Class;
+      Name : String)
+      return Object;
+   --  The symbol object for Name, interning it if new.  Distinct from Lookup,
+   --  which returns the value bound to Name; this returns the name's symbol.
+
    procedure Register_Object_Class
      (This        : Handle'Class;
       Name        : String;

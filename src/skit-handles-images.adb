@@ -29,11 +29,13 @@ package body Skit.Handles.Images is
    Kind_Integer     : constant := 1;
    Kind_Float       : constant := 2;
    Kind_Combinator  : constant := 3;
+   Kind_Symbol      : constant := 4;
 
    Section_Pool    : constant := 0;
    Section_Cells   : constant := 1;
    Section_Exports : constant := 2;
    Section_Import  : constant := 3;
+   Section_Symbols : constant := 4;
 
    Magic : constant String := "SKIX";
 
@@ -183,9 +185,10 @@ package body Skit.Handles.Images is
    ----------------
 
    function Get_Object
-     (D : Byte_Array;
-      C : in out Offset;
-      A : Object_Vectors.Vector)
+     (D   : Byte_Array;
+      C   : in out Offset;
+      A   : Object_Vectors.Vector;
+      Sym : Object_Vectors.Vector)
       return Object
    is
       Kind : constant Unsigned_8 := Get_U8 (D, C);
@@ -199,6 +202,8 @@ package body Skit.Handles.Images is
             return To_Object (Get_F64 (D, C));
          when Kind_Combinator =>
             return Combinator_From_Payload (Object_Payload (Get_U32 (D, C)));
+         when Kind_Symbol =>
+            return Sym (Natural (Get_U32 (D, C)));
          when others =>
             raise Image_Error with "bad object kind" & Kind'Image;
       end case;
@@ -251,6 +256,8 @@ package body Skit.Handles.Images is
       Id_Of         : Id_Maps.Map;
       Reverse_Names : Prim_Name_Maps.Map;
       Imports       : Import_Vectors.Vector;
+      Sym_Ids       : Id_Maps.Map;              --  symbol payload -> local id
+      Sym_List      : Object_Vectors.Vector;    --  local id -> symbol object
 
       function Intern (Name : String) return Unsigned_32;
       procedure Put_Object (B : in out Byte_Vectors.Vector; O : Object);
@@ -298,9 +305,18 @@ package body Skit.Handles.Images is
          elsif Is_Primitive (O) and then Payload (O) <= Payload_Suspension then
             Put_U8 (B, Kind_Combinator);
             Put_U32 (B, Unsigned_32 (Payload (O)));
+         elsif Is_Symbol (O) then
+            --  Serialize a symbol by name: assign a local id (emitted in the
+            --  Symbols section) and re-intern it into the loading handle.
+            Put_U8 (B, Kind_Symbol);
+            if not Sym_Ids.Contains (Payload (O)) then
+               Sym_Ids.Insert (Payload (O), Natural (Sym_List.Length));
+               Sym_List.Append (O);
+            end if;
+            Put_U32 (B, Unsigned_32 (Sym_Ids.Element (Payload (O))));
          else
             raise Image_Error with
-              "cannot serialize object (symbol, foreign, or primitive"
+              "cannot serialize object (foreign object, or primitive"
               & " function): " & This.Image (O);
          end if;
       end Put_Object;
@@ -363,6 +379,7 @@ package body Skit.Handles.Images is
 
       Cells   : Byte_Vectors.Vector;
       Imp     : Byte_Vectors.Vector;
+      Syms    : Byte_Vectors.Vector;
       Exp     : Byte_Vectors.Vector;
       Header  : Byte_Vectors.Vector;
       Mod_Ref : Unsigned_32;
@@ -446,6 +463,19 @@ package body Skit.Handles.Images is
          end;
       end loop;
 
+      --  Symbols section: local id -> name.  Emitted last, once every cell and
+      --  export slot has been visited and all symbol ids assigned.
+      Put_U32 (Syms, Unsigned_32 (Sym_List.Length));
+      for K in 1 .. Natural (Sym_List.Length) loop
+         declare
+            Id : constant Natural := K - 1;
+         begin
+            Put_U32 (Syms, Unsigned_32 (Id));
+            Put_U32
+              (Syms, Intern (This.H.Vector (Symbol_Index (Sym_List (Id)))));
+         end;
+      end loop;
+
       --  Header: fixed 20 bytes, then a 4-entry section directory.  Interning
       --  above is complete, so the pool is final and its offsets are stable.
       for Ch of Magic loop
@@ -459,15 +489,16 @@ package body Skit.Handles.Images is
       Put_U8 (Header, 0);     --  endianness (little)
       Put_U16 (Header, 0);    --  flags
       Put_U32 (Header, Mod_Ref);
-      Put_U16 (Header, 4);    --  section_count
+      Put_U16 (Header, 5);    --  section_count
 
       declare
-         Dir_Size  : constant Natural := 4 * (2 + 8 + 8);
+         Dir_Size  : constant Natural := 5 * (2 + 8 + 8);
          Base      : constant Natural := 20 + Dir_Size;
          Off_Pool  : constant Natural := Base;
          Off_Cells : constant Natural := Off_Pool + Natural (Pool.Length);
          Off_Imp   : constant Natural := Off_Cells + Natural (Cells.Length);
-         Off_Exp   : constant Natural := Off_Imp + Natural (Imp.Length);
+         Off_Syms  : constant Natural := Off_Imp + Natural (Imp.Length);
+         Off_Exp   : constant Natural := Off_Syms + Natural (Syms.Length);
       begin
          Put_U16 (Header, Section_Pool);
          Put_U64 (Header, Unsigned_64 (Off_Pool));
@@ -478,6 +509,9 @@ package body Skit.Handles.Images is
          Put_U16 (Header, Section_Import);
          Put_U64 (Header, Unsigned_64 (Off_Imp));
          Put_U64 (Header, Unsigned_64 (Imp.Length));
+         Put_U16 (Header, Section_Symbols);
+         Put_U64 (Header, Unsigned_64 (Off_Syms));
+         Put_U64 (Header, Unsigned_64 (Syms.Length));
          Put_U16 (Header, Section_Exports);
          Put_U64 (Header, Unsigned_64 (Off_Exp));
          Put_U64 (Header, Unsigned_64 (Exp.Length));
@@ -489,6 +523,7 @@ package body Skit.Handles.Images is
       Dump (Pool);
       Dump (Cells);
       Dump (Imp);
+      Dump (Syms);
       Dump (Exp);
       Ada.Streams.Stream_IO.Close (File);
    end Write;
@@ -513,10 +548,12 @@ package body Skit.Handles.Images is
          Last   : Offset;
 
          A          : Object_Vectors.Vector;
+         Sym        : Object_Vectors.Vector;
          Off_Pool   : Offset := -1;
          Off_Cells  : Offset := -1;
          Off_Exp    : Offset := -1;
          Off_Import : Offset := -1;
+         Off_Sym    : Offset := -1;
          C          : Offset := 0;
       begin
          Ada.Streams.Stream_IO.Read (File, D, Last);
@@ -567,6 +604,7 @@ package body Skit.Handles.Images is
                      when Section_Cells   => Off_Cells  := Off;
                      when Section_Exports => Off_Exp    := Off;
                      when Section_Import  => Off_Import := Off;
+                     when Section_Symbols => Off_Sym    := Off;
                      when others          => null;
                   end case;
                end;
@@ -575,6 +613,28 @@ package body Skit.Handles.Images is
 
          if Off_Pool < 0 or else Off_Cells < 0 or else Off_Exp < 0 then
             raise Image_Error with "missing required section";
+         end if;
+
+         --  Symbols: re-intern each by name into this handle, before decoding
+         --  any slot that references one.
+         if Off_Sym >= 0 then
+            declare
+               Cursor : Offset := Off_Sym;
+               Count  : constant Natural := Natural (Get_U32 (D, Cursor));
+            begin
+               for J in 1 .. Count loop
+                  declare
+                     Local_Id : constant Natural :=
+                                  Natural (Get_U32 (D, Cursor));
+                     Name_Ref : constant Unsigned_32 := Get_U32 (D, Cursor);
+                     Name     : constant String :=
+                                  Read_Name (D, Off_Pool + Offset (Name_Ref));
+                  begin
+                     pragma Assert (Local_Id = Natural (Sym.Length));
+                     Sym.Append (This.Intern_Symbol (Name));
+                  end;
+               end loop;
+            end;
          end if;
 
          --  Cells: reserve N blank cells, then back-patch each from the image.
@@ -588,8 +648,8 @@ package body Skit.Handles.Images is
             end loop;
             for J in 1 .. N loop
                declare
-                  Left  : constant Object := Get_Object (D, Cursor, A);
-                  Right : constant Object := Get_Object (D, Cursor, A);
+                  Left  : constant Object := Get_Object (D, Cursor, A, Sym);
+                  Right : constant Object := Get_Object (D, Cursor, A, Sym);
                begin
                   This.H.Machine.Set_Left (A (J - 1), Left);
                   This.H.Machine.Set_Right (A (J - 1), Right);
@@ -639,7 +699,7 @@ package body Skit.Handles.Images is
                   Name     : constant String :=
                                Read_Name
                                  (D, Off_Pool + Offset (Name_Ref));
-                  Value    : constant Object := Get_Object (D, Cursor, A);
+                  Value    : constant Object := Get_Object (D, Cursor, A, Sym);
                begin
                   This.Bind (Name, Value);
                end;
