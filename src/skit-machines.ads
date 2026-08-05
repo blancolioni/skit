@@ -50,6 +50,18 @@ private package Skit.Machines is
       App  : Object)
       return Object;
 
+   procedure Set_Left
+     (This : in out Instance'Class;
+      App  : Object;
+      To   : Object)
+     with Pre => Is_Application (App);
+
+   procedure Set_Right
+     (This : in out Instance'Class;
+      App  : Object;
+      To   : Object)
+     with Pre => Is_Application (App);
+
    type Lazy_Argument_Array is array (Positive range <>) of Boolean;
 
    function Primitive

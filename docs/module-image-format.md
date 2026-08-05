@@ -8,6 +8,18 @@ execution image. Read ADR 0002 first for the *why*; this file is the *what*.
 Status: sketch. Field widths and section kinds are provisional until the writer
 and two-pass loader are implemented.
 
+**Implementation status.** A first reader/writer lives in
+[skit-handles-images.adb](../src/skit-handles-images.adb). It handles the
+Header, StringPool, Cells and Exports sections and internal-reference
+relocation, for cells containing applications, integers, floats and the
+VM-fixed combinators. Not yet implemented: SymbolAtoms, ImportReloc,
+ForeignObjects, Annotations, the Fingerprint and the Checksum — the writer
+raises `Image_Error` on an object it cannot yet round-trip (a symbol, foreign
+object or primitive function), and the loader is single-module (no cross-module
+link pass). The on-disk object encoding is a 1-byte kind tag (application /
+integer / float / combinator) plus its payload, rather than a raw object word;
+raw-word framing arrives with the wider id-class support.
+
 ## Conventions
 
 - **Integers** are fixed-width unsigned, stored in the byte order declared by the

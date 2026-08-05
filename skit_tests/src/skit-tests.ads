@@ -45,6 +45,10 @@ package Skit.Tests is
    --  discovery, bare-root marking, child forwarding, sweeping the
    --  unreachable, and slot reuse.
 
+   procedure Test_Images;
+   --  Round-trip a module image: write a graph to disk, read it back into a
+   --  fresh machine, and check its structure survived relocation.
+
    procedure Report;
 
 private

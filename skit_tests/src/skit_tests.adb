@@ -92,5 +92,6 @@ begin
    Test ("eq #maxInt 536870911 1 0", 1);
    Test ("+ 0 #minInt", -536870912);
    Test_Foreign_Objects;
+   Test_Images;
    Report;
 end Skit_Tests;

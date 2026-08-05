@@ -775,6 +775,32 @@ package body Skit.Machines is
       end return;
    end Pop;
 
+   --------------
+   -- Set_Left --
+   --------------
+
+   procedure Set_Left
+     (This : in out Instance'Class;
+      App  : Object;
+      To   : Object)
+   is
+   begin
+      Skit.Memory.Set_Left (This.Core, App, To);
+   end Set_Left;
+
+   ---------------
+   -- Set_Right --
+   ---------------
+
+   procedure Set_Right
+     (This : in out Instance'Class;
+      App  : Object;
+      To   : Object)
+   is
+   begin
+      Skit.Memory.Set_Right (This.Core, App, To);
+   end Set_Right;
+
    -----------------
    -- Stack_Empty --
    -----------------

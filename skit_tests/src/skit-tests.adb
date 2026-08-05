@@ -1,11 +1,15 @@
 with Ada.Command_Line;
 with Ada.Containers.Doubly_Linked_Lists;
+with Ada.Directories;
 with Ada.Streams;
 with Ada.Wide_Wide_Text_IO;
 with Ada.Text_IO;
 
+with Ada.Strings.Unbounded;
+
 with Skit.Compiler;
 with Skit.Handles;
+with Skit.Handles.Images;
 with Skit.Parser;
 
 package body Skit.Tests is
@@ -731,6 +735,93 @@ package body Skit.Tests is
       Check ("foreign: shutdown frees survivors",
              Freed (1) and then Freed (3) and then Freed (4));
    end Test_Foreign_Objects;
+
+   -----------------
+   -- Test_Images --
+   -----------------
+
+   procedure Test_Images is
+      use Ada.Strings.Unbounded;
+
+      Path : constant String := "test_image.skix";
+
+      Hw : constant Skit.Handles.Handle :=
+             Skit.Handles.New_Handle (Core_Size => 1024);
+      Hr : constant Skit.Handles.Handle :=
+             Skit.Handles.New_Handle (Core_Size => 1024);
+
+      function No_Resolve (Name : String) return Object;
+
+      procedure Check (Name : String; Cond : Boolean);
+
+      ----------------
+      -- No_Resolve --
+      ----------------
+
+      function No_Resolve (Name : String) return Object is
+         pragma Unreferenced (Name);
+      begin
+         return Undefined;
+      end No_Resolve;
+
+      -----------
+      -- Check --
+      -----------
+
+      procedure Check (Name : String; Cond : Boolean) is
+      begin
+         Total := @ + 1;
+         Put (Name, 38);
+         Ada.Text_IO.Set_Col (40);
+         if Cond then
+            Pass := @ + 1;
+            Ada.Text_IO.Put_Line ("PASS");
+         else
+            Fail := @ + 1;
+            Ada.Text_IO.Put_Line ("FAIL");
+         end if;
+      end Check;
+
+      --  The graph K 42 99 == App (App (K, 42), 99): two nested cells, an
+      --  integer at each level and a combinator at the bottom.
+      Graph : constant Skit.Terms.Term :=
+                Skit.Terms.Apply
+                  (Skit.Terms.Apply
+                     (Skit.Terms.Combinator (Skit.K),
+                      Skit.Terms.Const (42)),
+                   Skit.Terms.Const (99));
+
+      Root : constant Object :=
+               Hw.Install (Skit.Compiler.Compile (Graph),
+                           No_Resolve'Access);
+   begin
+      Hw.Bind ("root", Root);
+      Skit.Handles.Images.Write
+        (Hw, Path, [1 => To_Unbounded_String ("root")]);
+
+      Skit.Handles.Images.Read (Hr, Path);
+
+      declare
+         RB    : constant Object := Hr.Lookup ("root");
+         Inner : constant Object :=
+                   (if Is_Application (RB) then Hr.Left (RB) else Undefined);
+      begin
+         Check ("image: export is an application", Is_Application (RB));
+         Check ("image: outer right leaf preserved",
+                Is_Application (RB) and then Hr.Right (RB) = To_Object (99));
+         Check ("image: inner node is an application",
+                Is_Application (Inner));
+         Check ("image: combinator preserved",
+                Is_Application (Inner) and then Hr.Left (Inner) = Skit.K);
+         Check ("image: inner int leaf preserved",
+                Is_Application (Inner)
+                and then Hr.Right (Inner) = To_Object (42));
+      end;
+
+      if Ada.Directories.Exists (Path) then
+         Ada.Directories.Delete_File (Path);
+      end if;
+   end Test_Images;
 
    ---------
    -- Var --
