@@ -33,6 +33,7 @@ package body Skit.Handles.Images is
    Section_Pool    : constant := 0;
    Section_Cells   : constant := 1;
    Section_Exports : constant := 2;
+   Section_Import  : constant := 3;
 
    Magic : constant String := "SKIX";
 
@@ -229,13 +230,35 @@ package body Skit.Handles.Images is
       package Node_Vectors is
         new Ada.Containers.Vectors (Natural, Node);
 
-      Pool       : Byte_Vectors.Vector;
-      Pool_Names : Name_Offset_Maps.Map;
-      Nodes      : Node_Vectors.Vector;
-      Id_Of      : Id_Maps.Map;
+      package Prim_Name_Maps is
+        new Ada.Containers.Ordered_Maps (Object_Payload, Unbounded_String);
+
+      --  A named import: the (cell, side) slot holds the Undefined sentinel in
+      --  the Cells section and is resolved by Name at load.
+      type Import_Entry is
+         record
+            Cell_Index : Natural;
+            Side       : Unsigned_8;
+            Name       : Unbounded_String;
+         end record;
+
+      package Import_Vectors is
+        new Ada.Containers.Vectors (Natural, Import_Entry);
+
+      Pool          : Byte_Vectors.Vector;
+      Pool_Names    : Name_Offset_Maps.Map;
+      Nodes         : Node_Vectors.Vector;
+      Id_Of         : Id_Maps.Map;
+      Reverse_Names : Prim_Name_Maps.Map;
+      Imports       : Import_Vectors.Vector;
 
       function Intern (Name : String) return Unsigned_32;
       procedure Put_Object (B : in out Byte_Vectors.Vector; O : Object);
+      procedure Put_Slot
+        (B          : in out Byte_Vectors.Vector;
+         O          : Object;
+         Cell_Index : Natural;
+         Side       : Unsigned_8);
       procedure Scan (O : Object);
 
       ------------
@@ -282,6 +305,42 @@ package body Skit.Handles.Images is
          end if;
       end Put_Object;
 
+      --------------
+      -- Put_Slot --
+      --------------
+
+      --  A cell slot.  A primitive function is build-specific, so it is not
+      --  baked into the cell: the slot gets the Undefined sentinel and a named
+      --  import entry, resolved by name at load (see ADR 0002).
+
+      procedure Put_Slot
+        (B          : in out Byte_Vectors.Vector;
+         O          : Object;
+         Cell_Index : Natural;
+         Side       : Unsigned_8)
+      is
+      begin
+         if Is_Primitive_Function (O) then
+            declare
+               Pos : constant Prim_Name_Maps.Cursor :=
+                       Reverse_Names.Find (Payload (O));
+            begin
+               if not Prim_Name_Maps.Has_Element (Pos) then
+                  raise Image_Error with
+                    "primitive function has no bound name to import as: "
+                    & This.Image (O);
+               end if;
+               Put_U8 (B, Kind_Combinator);
+               Put_U32 (B, Unsigned_32 (Payload_Undefined));
+               Imports.Append
+                 (Import_Entry'(Cell_Index, Side,
+                                Prim_Name_Maps.Element (Pos)));
+            end;
+         else
+            Put_Object (B, O);
+         end if;
+      end Put_Slot;
+
       ----------
       -- Scan --
       ----------
@@ -303,6 +362,7 @@ package body Skit.Handles.Images is
       end Scan;
 
       Cells   : Byte_Vectors.Vector;
+      Imp     : Byte_Vectors.Vector;
       Exp     : Byte_Vectors.Vector;
       Header  : Byte_Vectors.Vector;
       Mod_Ref : Unsigned_32;
@@ -327,6 +387,22 @@ package body Skit.Handles.Images is
    begin
       Mod_Ref := Intern (Module_Name);
 
+      --  Build the reverse map object -> bound name over this handle's known
+      --  names, so a baked primitive can be re-exported as a named import.
+      for K in 1 .. Natural (This.H.Vector.Length) loop
+         declare
+            Name  : constant String := This.H.Vector (K - 1);
+            Value : constant Object := This.Lookup (Name);
+         begin
+            if Value /= Undefined and then Is_Primitive_Function (Value)
+              and then not Reverse_Names.Contains (Payload (Value))
+            then
+               Reverse_Names.Insert
+                 (Payload (Value), To_Unbounded_String (Name));
+            end if;
+         end;
+      end loop;
+
       for E of Exports loop
          declare
             Name : constant String := To_String (E);
@@ -339,11 +415,24 @@ package body Skit.Handles.Images is
          end;
       end loop;
 
-      --  Cells section.
+      --  Cells section (import slots recorded as they are emitted).
       Put_U32 (Cells, Unsigned_32 (Nodes.Length));
-      for N of Nodes loop
-         Put_Object (Cells, N.Left);
-         Put_Object (Cells, N.Right);
+      declare
+         Index : Natural := 0;
+      begin
+         for N of Nodes loop
+            Put_Slot (Cells, N.Left, Index, 0);
+            Put_Slot (Cells, N.Right, Index, 1);
+            Index := Index + 1;
+         end loop;
+      end;
+
+      --  Import relocation section: (cell, side) -> name.
+      Put_U32 (Imp, Unsigned_32 (Imports.Length));
+      for E of Imports loop
+         Put_U32 (Imp, Unsigned_32 (E.Cell_Index));
+         Put_U8 (Imp, E.Side);
+         Put_U32 (Imp, Intern (To_String (E.Name)));
       end loop;
 
       --  Exports section: name reference + the (localized) root object.
@@ -357,7 +446,7 @@ package body Skit.Handles.Images is
          end;
       end loop;
 
-      --  Header: fixed 20 bytes, then a 3-entry section directory.  Interning
+      --  Header: fixed 20 bytes, then a 4-entry section directory.  Interning
       --  above is complete, so the pool is final and its offsets are stable.
       for Ch of Magic loop
          Put_U8 (Header, Unsigned_8 (Character'Pos (Ch)));
@@ -370,14 +459,15 @@ package body Skit.Handles.Images is
       Put_U8 (Header, 0);     --  endianness (little)
       Put_U16 (Header, 0);    --  flags
       Put_U32 (Header, Mod_Ref);
-      Put_U16 (Header, 3);    --  section_count
+      Put_U16 (Header, 4);    --  section_count
 
       declare
-         Dir_Size  : constant Natural := 3 * (2 + 8 + 8);
+         Dir_Size  : constant Natural := 4 * (2 + 8 + 8);
          Base      : constant Natural := 20 + Dir_Size;
          Off_Pool  : constant Natural := Base;
          Off_Cells : constant Natural := Off_Pool + Natural (Pool.Length);
-         Off_Exp   : constant Natural := Off_Cells + Natural (Cells.Length);
+         Off_Imp   : constant Natural := Off_Cells + Natural (Cells.Length);
+         Off_Exp   : constant Natural := Off_Imp + Natural (Imp.Length);
       begin
          Put_U16 (Header, Section_Pool);
          Put_U64 (Header, Unsigned_64 (Off_Pool));
@@ -385,6 +475,9 @@ package body Skit.Handles.Images is
          Put_U16 (Header, Section_Cells);
          Put_U64 (Header, Unsigned_64 (Off_Cells));
          Put_U64 (Header, Unsigned_64 (Cells.Length));
+         Put_U16 (Header, Section_Import);
+         Put_U64 (Header, Unsigned_64 (Off_Imp));
+         Put_U64 (Header, Unsigned_64 (Imp.Length));
          Put_U16 (Header, Section_Exports);
          Put_U64 (Header, Unsigned_64 (Off_Exp));
          Put_U64 (Header, Unsigned_64 (Exp.Length));
@@ -395,6 +488,7 @@ package body Skit.Handles.Images is
       Dump (Header);
       Dump (Pool);
       Dump (Cells);
+      Dump (Imp);
       Dump (Exp);
       Ada.Streams.Stream_IO.Close (File);
    end Write;
@@ -418,11 +512,12 @@ package body Skit.Handles.Images is
          D      : Byte_Array (0 .. Offset (Length) - 1);
          Last   : Offset;
 
-         A         : Object_Vectors.Vector;
-         Off_Pool  : Offset := -1;
-         Off_Cells : Offset := -1;
-         Off_Exp   : Offset := -1;
-         C         : Offset := 0;
+         A          : Object_Vectors.Vector;
+         Off_Pool   : Offset := -1;
+         Off_Cells  : Offset := -1;
+         Off_Exp    : Offset := -1;
+         Off_Import : Offset := -1;
+         C          : Offset := 0;
       begin
          Ada.Streams.Stream_IO.Read (File, D, Last);
          Ada.Streams.Stream_IO.Close (File);
@@ -468,9 +563,10 @@ package body Skit.Handles.Images is
                begin
                   pragma Unreferenced (Len);
                   case Kind is
-                     when Section_Pool    => Off_Pool  := Off;
-                     when Section_Cells   => Off_Cells := Off;
-                     when Section_Exports => Off_Exp   := Off;
+                     when Section_Pool    => Off_Pool   := Off;
+                     when Section_Cells   => Off_Cells  := Off;
+                     when Section_Exports => Off_Exp    := Off;
+                     when Section_Import  => Off_Import := Off;
                      when others          => null;
                   end case;
                end;
@@ -500,6 +596,37 @@ package body Skit.Handles.Images is
                end;
             end loop;
          end;
+
+         --  Imports: resolve each name in this handle and patch the sentinel
+         --  slot.  (Single-module: resolution is the standing environment.)
+         if Off_Import >= 0 then
+            declare
+               Cursor : Offset := Off_Import;
+               Count  : constant Natural := Natural (Get_U32 (D, Cursor));
+            begin
+               for J in 1 .. Count loop
+                  declare
+                     Cell_Index : constant Natural :=
+                                    Natural (Get_U32 (D, Cursor));
+                     Side       : constant Unsigned_8 := Get_U8 (D, Cursor);
+                     Name_Ref   : constant Unsigned_32 := Get_U32 (D, Cursor);
+                     Name       : constant String :=
+                                    Read_Name
+                                      (D, Off_Pool + Offset (Name_Ref));
+                     Value      : constant Object := This.Lookup (Name);
+                  begin
+                     if Value = Undefined then
+                        raise Image_Error with "unresolved import: " & Name;
+                     end if;
+                     if Side = 0 then
+                        This.H.Machine.Set_Left (A (Cell_Index), Value);
+                     else
+                        This.H.Machine.Set_Right (A (Cell_Index), Value);
+                     end if;
+                  end;
+               end loop;
+            end;
+         end if;
 
          --  Exports: bind each into this handle.
          declare

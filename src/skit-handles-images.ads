@@ -5,13 +5,14 @@ package Skit.Handles.Images is
    --  Reader/writer for the external module image format
    --  (skit/docs/module-image-format.md).
    --
-   --  MVP scope: a single module's snapshot -- header, string pool, cells and
-   --  exports, with internal-reference relocation.  Cell contents may be
-   --  applications, integers, floats and the VM-fixed combinators.  Symbols,
-   --  foreign objects, primitive functions, cross-module imports, annotations,
-   --  the interface fingerprint and the checksum are not yet handled; the
-   --  writer raises Image_Error rather than emit an object it cannot
-   --  round-trip.
+   --  MVP scope: a single module's snapshot -- header, string pool, cells,
+   --  a named-import relocation table and exports, with internal-reference
+   --  relocation.  Cell contents may be applications, integers, floats, the
+   --  VM-fixed combinators, and primitive functions (emitted as by-name
+   --  imports and resolved against the loading handle's environment).  Symbols,
+   --  foreign objects, annotations, the interface fingerprint and the checksum
+   --  are not yet handled; the writer raises Image_Error rather than emit an
+   --  object it cannot round-trip (and on a primitive with no bound name).
 
    type Name_Array is
      array (Positive range <>) of Ada.Strings.Unbounded.Unbounded_String;

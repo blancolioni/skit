@@ -1048,7 +1048,51 @@ package body Skit.Tests is
          exception
             when Img.Image_Error => Caught := True;
          end;
-         Check ("image: primitive function rejected", Caught);
+         Check ("image: bare primitive export rejected", Caught);
+      end;
+
+      --  Named imports: a graph referencing the primitive #add serializes with
+      --  the primitive as a by-name import, and re-links to a *different*
+      --  machine's #add on load (the build-specific opcode never crosses).
+      declare
+         Hw   : constant Skit.Handles.Handle := New_Machine;
+         Hr   : constant Skit.Handles.Handle := New_Machine;
+         Hbad : constant Skit.Handles.Handle := New_Machine;
+
+         function From_Writer (Name : String) return Object
+         is (Hw.Lookup (Name));
+         function From_Reader (Name : String) return Object
+         is (Hr.Lookup (Name));
+
+         Caught : Boolean := False;
+      begin
+         Hw.Bind ("#add", Hw.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+         Hw.Bind
+           ("sum",
+            Hw.Install
+              (Skit.Compiler.Compile
+                 (T.Apply
+                    (T.Apply (T.Symbol ("#add"), T.Const (2)),
+                     T.Const (3))),
+               From_Writer'Access));
+         Img.Write (Hw, Path, [1 => U ("sum")]);
+
+         --  Reader that provides its own #add: the import must resolve to it.
+         Hr.Bind ("#add", Hr.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+         Img.Read (Hr, Path);
+         Hr.Install
+           (Skit.Compiler.Compile (T.Symbol ("sum")), From_Reader'Access);
+         Hr.Evaluate;
+         Check ("image: named import re-links and evaluates",
+                Hr.Pop = To_Object (5));
+
+         --  Reader lacking #add: the import cannot resolve.
+         begin
+            Img.Read (Hbad, Path);
+         exception
+            when Img.Image_Error => Caught := True;
+         end;
+         Check ("image: unresolved import rejected", Caught);
       end;
 
       if Ada.Directories.Exists (Path) then
