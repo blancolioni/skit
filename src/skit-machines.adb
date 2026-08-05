@@ -1,5 +1,6 @@
 with Ada.Calendar;
 with Ada.Text_IO;
+with Ada.Unchecked_Deallocation;
 with Skit.Debug;
 
 package body Skit.Machines is
@@ -36,6 +37,13 @@ package body Skit.Machines is
    procedure GC
      (This : in out Instance'Class;
       Xs   : in out Object_Array);
+
+   procedure Mark_Pinned_Foreign (This : in out Instance'Class);
+   procedure Reset_Foreign_Marks (This : in out Instance'Class);
+
+   procedure Free_Reference is
+     new Ada.Unchecked_Deallocation
+       (Foreign_Object_Interface'Class, Foreign_Reference);
 
    ------------
    -- Append --
@@ -659,10 +667,12 @@ package body Skit.Machines is
             for X of Xs loop
                Mark (This.Core, X);
             end loop;
+            This.Mark_Pinned_Foreign;
 
             GC (This.Core);
 
             After_GC (This.Core);
+            This.Reset_Foreign_Marks;
             This.GC_Time := @ + (Clock - Start);
          end;
       else
@@ -679,10 +689,12 @@ package body Skit.Machines is
          for X of Xs loop
             Mark (This.Core, X);
          end loop;
+         This.Mark_Pinned_Foreign;
 
          GC (This.Core);
 
          After_GC (This.Core);
+         This.Reset_Foreign_Marks;
       end if;
 
       This.GC_Count := @ + 1;
@@ -796,5 +808,136 @@ package body Skit.Machines is
    begin
       S := This.Apply (Value, S);
    end Push;
+
+   ---------------------------
+   -- Register_Object_Class --
+   ---------------------------
+
+   procedure Register_Object_Class
+     (This        : in out Instance'Class;
+      Name        : String;
+      Deserialize : Deserializer)
+   is
+   begin
+      This.Classes.Include (Name, Deserialize);
+   end Register_Object_Class;
+
+   -----------------
+   -- Bind_Object --
+   -----------------
+
+   function Bind_Object
+     (This : in out Instance'Class;
+      Obj  : not null Foreign_Reference)
+      return Object
+   is
+      New_Slot : constant Foreign_Slot :=
+                   (Ref => Obj, Pinned => True, Marked => False);
+      Index    : Natural;
+   begin
+      if This.Free_Slots.Is_Empty then
+         Index := Natural (This.Foreign.Length);
+         This.Foreign.Append (New_Slot);
+      else
+         Index := This.Free_Slots.Last_Element;
+         This.Free_Slots.Delete_Last;
+         This.Foreign.Replace_Element (Index, New_Slot);
+      end if;
+      return Foreign_Object (Index);
+   end Bind_Object;
+
+   -----------
+   -- Unpin --
+   -----------
+
+   procedure Unpin
+     (This : in out Instance'Class;
+      O    : Object)
+   is
+      Index : constant Natural := Foreign_Object_Index (O);
+      Slot  : Foreign_Slot     := This.Foreign (Index);
+   begin
+      Slot.Pinned := False;
+      This.Foreign.Replace_Element (Index, Slot);
+   end Unpin;
+
+   -------------------------
+   -- Mark_Pinned_Foreign --
+   -------------------------
+
+   --  Forward the children of every pinned foreign object into to-space, so
+   --  their reachable subgraphs survive the collection.  Called during the
+   --  mark phase, before the Cheney scan.  Non-pinned foreign objects that are
+   --  reachable only through live cells are NOT discovered here -- that needs
+   --  a scan of the live cell region (future work); until it lands such
+   --  objects are retained (never swept mid-run), the leak-safe failure mode.
+
+   procedure Mark_Pinned_Foreign (This : in out Instance'Class) is
+
+      procedure Forward (Child : in out Object);
+
+      procedure Forward (Child : in out Object) is
+      begin
+         Skit.Memory.Mark (This.Core, Child);
+      end Forward;
+
+   begin
+      for K in 1 .. Natural (This.Foreign.Length) loop
+         declare
+            Index : constant Natural := K - 1;
+            Slot  : Foreign_Slot     := This.Foreign (Index);
+         begin
+            if Slot.Ref /= null and then Slot.Pinned
+              and then not Slot.Marked
+            then
+               Slot.Marked := True;
+               This.Foreign.Replace_Element (Index, Slot);
+               Slot.Ref.Visit (Forward'Access);
+            end if;
+         end;
+      end loop;
+   end Mark_Pinned_Foreign;
+
+   -------------------------
+   -- Reset_Foreign_Marks --
+   -------------------------
+
+   procedure Reset_Foreign_Marks (This : in out Instance'Class) is
+   begin
+      for K in 1 .. Natural (This.Foreign.Length) loop
+         declare
+            Index : constant Natural := K - 1;
+            Slot  : Foreign_Slot     := This.Foreign (Index);
+         begin
+            if Slot.Marked then
+               Slot.Marked := False;
+               This.Foreign.Replace_Element (Index, Slot);
+            end if;
+         end;
+      end loop;
+   end Reset_Foreign_Marks;
+
+   --------------------------
+   -- Free_Foreign_Objects --
+   --------------------------
+
+   procedure Free_Foreign_Objects (This : in out Instance'Class) is
+   begin
+      for K in 1 .. Natural (This.Foreign.Length) loop
+         declare
+            Index : constant Natural := K - 1;
+            Slot  : Foreign_Slot     := This.Foreign (Index);
+         begin
+            if Slot.Ref /= null then
+               Slot.Ref.Free;
+               Free_Reference (Slot.Ref);
+               This.Foreign.Replace_Element
+                 (Index, (Ref => null, Pinned => False, Marked => False));
+            end if;
+         end;
+      end loop;
+      This.Foreign.Clear;
+      This.Free_Slots.Clear;
+   end Free_Foreign_Objects;
 
 end Skit.Machines;

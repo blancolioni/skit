@@ -33,6 +33,53 @@ package body Skit.Handles is
       This.H.Machine.Bind (This.To_Symbol_Object (Name), Value);
    end Bind;
 
+   -----------------
+   -- Bind_Object --
+   -----------------
+
+   function Bind_Object
+     (This : Handle'Class;
+      Obj  : not null Foreign_Reference)
+      return Object
+   is
+   begin
+      return This.H.Machine.Bind_Object (Obj);
+   end Bind_Object;
+
+   ---------------------------
+   -- Register_Object_Class --
+   ---------------------------
+
+   procedure Register_Object_Class
+     (This        : Handle'Class;
+      Name        : String;
+      Deserialize : Deserializer)
+   is
+   begin
+      This.H.Machine.Register_Object_Class (Name, Deserialize);
+   end Register_Object_Class;
+
+   -----------
+   -- Unpin --
+   -----------
+
+   procedure Unpin
+     (This : Handle'Class;
+      O    : Object)
+   is
+   begin
+      This.H.Machine.Unpin (O);
+   end Unpin;
+
+   --------------------------
+   -- Free_Foreign_Objects --
+   --------------------------
+
+   procedure Free_Foreign_Objects (This : Handle'Class) is
+   begin
+      This.H.Machine.Free_Foreign_Objects;
+   end Free_Foreign_Objects;
+
    --------------
    -- Evaluate --
    --------------

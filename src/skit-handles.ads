@@ -95,6 +95,29 @@ package Skit.Handles is
       Name : String)
       return Object;
 
+   procedure Register_Object_Class
+     (This        : Handle'Class;
+      Name        : String;
+      Deserialize : Deserializer);
+   --  Register a deserializer factory for foreign objects of class Name,
+   --  before loading any image that carries objects of that class.
+
+   function Bind_Object
+     (This : Handle'Class;
+      Obj  : not null Foreign_Reference)
+      return Object;
+   --  Take ownership of Obj and return the object that references it.  The
+   --  bound object starts pinned; call Unpin once it is stored in a rooted
+   --  cell (see the fresh-bind hazard in ADR 0002).
+
+   procedure Unpin
+     (This : Handle'Class;
+      O    : Object);
+   --  Clear the pin on a bound foreign object.
+
+   procedure Free_Foreign_Objects (This : Handle'Class);
+   --  Free every remaining foreign object; call at machine shutdown.
+
    procedure Report (This : Handle'Class);
 
 private
