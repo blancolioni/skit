@@ -1,5 +1,6 @@
 with Ada.Containers.Indefinite_Ordered_Maps;
 with Ada.Containers.Ordered_Maps;
+with Ada.Containers.Ordered_Sets;
 with Ada.Containers.Vectors;
 with Ada.Streams.Stream_IO;
 with Ada.Unchecked_Conversion;
@@ -30,12 +31,14 @@ package body Skit.Handles.Images is
    Kind_Float       : constant := 2;
    Kind_Combinator  : constant := 3;
    Kind_Symbol      : constant := 4;
+   Kind_Foreign     : constant := 5;
 
    Section_Pool    : constant := 0;
    Section_Cells   : constant := 1;
    Section_Exports : constant := 2;
    Section_Import  : constant := 3;
    Section_Symbols : constant := 4;
+   Section_Foreign : constant := 6;
 
    Magic : constant String := "SKIX";
 
@@ -188,7 +191,8 @@ package body Skit.Handles.Images is
      (D   : Byte_Array;
       C   : in out Offset;
       A   : Object_Vectors.Vector;
-      Sym : Object_Vectors.Vector)
+      Sym : Object_Vectors.Vector;
+      Frn : Object_Vectors.Vector)
       return Object
    is
       Kind : constant Unsigned_8 := Get_U8 (D, C);
@@ -204,6 +208,8 @@ package body Skit.Handles.Images is
             return Combinator_From_Payload (Object_Payload (Get_U32 (D, C)));
          when Kind_Symbol =>
             return Sym (Natural (Get_U32 (D, C)));
+         when Kind_Foreign =>
+            return Frn (Natural (Get_U32 (D, C)));
          when others =>
             raise Image_Error with "bad object kind" & Kind'Image;
       end case;
@@ -250,6 +256,20 @@ package body Skit.Handles.Images is
       package Import_Vectors is
         new Ada.Containers.Vectors (Natural, Import_Entry);
 
+      package Payload_Sets is
+        new Ada.Containers.Ordered_Sets (Object_Payload);
+
+      --  A foreign object to serialize: its bound reference and its Object
+      --  children (collected via Visit), in Visit order.
+      type Foreign_Rec is
+         record
+            Ref  : Foreign_Reference;
+            Kids : Object_Vectors.Vector;
+         end record;
+
+      package Foreign_Vectors is
+        new Ada.Containers.Vectors (Natural, Foreign_Rec);
+
       Pool          : Byte_Vectors.Vector;
       Pool_Names    : Name_Offset_Maps.Map;
       Nodes         : Node_Vectors.Vector;
@@ -258,6 +278,9 @@ package body Skit.Handles.Images is
       Imports       : Import_Vectors.Vector;
       Sym_Ids       : Id_Maps.Map;              --  symbol payload -> local id
       Sym_List      : Object_Vectors.Vector;    --  local id -> symbol object
+      Foreign_Ids   : Id_Maps.Map;              --  foreign payload -> local id
+      Foreign_List  : Foreign_Vectors.Vector;   --  local id -> foreign record
+      Visiting      : Payload_Sets.Set;         --  foreign cycle guard
 
       function Intern (Name : String) return Unsigned_32;
       procedure Put_Object (B : in out Byte_Vectors.Vector; O : Object);
@@ -314,10 +337,14 @@ package body Skit.Handles.Images is
                Sym_List.Append (O);
             end if;
             Put_U32 (B, Unsigned_32 (Sym_Ids.Element (Payload (O))));
+         elsif Is_Foreign_Object (O) then
+            --  A foreign object is assigned its local id during Scan.
+            Put_U8 (B, Kind_Foreign);
+            Put_U32 (B, Unsigned_32 (Foreign_Ids.Element (Payload (O))));
          else
             raise Image_Error with
-              "cannot serialize object (foreign object, or primitive"
-              & " function): " & This.Image (O);
+              "cannot serialize object (primitive function): "
+              & This.Image (O);
          end if;
       end Put_Object;
 
@@ -374,11 +401,41 @@ package body Skit.Handles.Images is
                Scan (L);
                Scan (R);
             end;
+         elsif Is_Foreign_Object (O)
+           and then not Foreign_Ids.Contains (Payload (O))
+         then
+            if Visiting.Contains (Payload (O)) then
+               raise Image_Error with
+                 "cyclic foreign object not supported: " & This.Image (O);
+            end if;
+            Visiting.Insert (Payload (O));
+            declare
+               Ref  : constant Foreign_Reference :=
+                        This.H.Machine.Foreign_Object_Ref (O);
+               Kids : Object_Vectors.Vector;
+
+               procedure Collect (Child : in out Object);
+
+               procedure Collect (Child : in out Object) is
+               begin
+                  Kids.Append (Child);
+               end Collect;
+            begin
+               Ref.Visit (Collect'Access);
+               for Kid of Kids loop
+                  Scan (Kid);   --  nested foreign objects get lower ids
+               end loop;
+               Visiting.Delete (Payload (O));
+               Foreign_Ids.Insert
+                 (Payload (O), Natural (Foreign_List.Length));
+               Foreign_List.Append (Foreign_Rec'(Ref => Ref, Kids => Kids));
+            end;
          end if;
       end Scan;
 
       Cells   : Byte_Vectors.Vector;
       Imp     : Byte_Vectors.Vector;
+      Frn     : Byte_Vectors.Vector;
       Syms    : Byte_Vectors.Vector;
       Exp     : Byte_Vectors.Vector;
       Header  : Byte_Vectors.Vector;
@@ -452,6 +509,24 @@ package body Skit.Handles.Images is
          Put_U32 (Imp, Intern (To_String (E.Name)));
       end loop;
 
+      --  Foreign-object section: class name, relocated children, opaque bytes.
+      Put_U32 (Frn, Unsigned_32 (Foreign_List.Length));
+      for R of Foreign_List loop
+         Put_U32 (Frn, Intern (R.Ref.Class_Name));
+         Put_U32 (Frn, Unsigned_32 (R.Kids.Length));
+         for Kid of R.Kids loop
+            Put_Object (Frn, Kid);
+         end loop;
+         declare
+            Bytes : constant Byte_Array := R.Ref.Serialize;
+         begin
+            Put_U64 (Frn, Unsigned_64 (Bytes'Length));
+            for X of Bytes loop
+               Frn.Append (X);
+            end loop;
+         end;
+      end loop;
+
       --  Exports section: name reference + the (localized) root object.
       Put_U32 (Exp, Unsigned_32 (Exports'Length));
       for E of Exports loop
@@ -489,15 +564,16 @@ package body Skit.Handles.Images is
       Put_U8 (Header, 0);     --  endianness (little)
       Put_U16 (Header, 0);    --  flags
       Put_U32 (Header, Mod_Ref);
-      Put_U16 (Header, 5);    --  section_count
+      Put_U16 (Header, 6);    --  section_count
 
       declare
-         Dir_Size  : constant Natural := 5 * (2 + 8 + 8);
+         Dir_Size  : constant Natural := 6 * (2 + 8 + 8);
          Base      : constant Natural := 20 + Dir_Size;
          Off_Pool  : constant Natural := Base;
          Off_Cells : constant Natural := Off_Pool + Natural (Pool.Length);
          Off_Imp   : constant Natural := Off_Cells + Natural (Cells.Length);
-         Off_Syms  : constant Natural := Off_Imp + Natural (Imp.Length);
+         Off_Frn   : constant Natural := Off_Imp + Natural (Imp.Length);
+         Off_Syms  : constant Natural := Off_Frn + Natural (Frn.Length);
          Off_Exp   : constant Natural := Off_Syms + Natural (Syms.Length);
       begin
          Put_U16 (Header, Section_Pool);
@@ -509,6 +585,9 @@ package body Skit.Handles.Images is
          Put_U16 (Header, Section_Import);
          Put_U64 (Header, Unsigned_64 (Off_Imp));
          Put_U64 (Header, Unsigned_64 (Imp.Length));
+         Put_U16 (Header, Section_Foreign);
+         Put_U64 (Header, Unsigned_64 (Off_Frn));
+         Put_U64 (Header, Unsigned_64 (Frn.Length));
          Put_U16 (Header, Section_Symbols);
          Put_U64 (Header, Unsigned_64 (Off_Syms));
          Put_U64 (Header, Unsigned_64 (Syms.Length));
@@ -523,6 +602,7 @@ package body Skit.Handles.Images is
       Dump (Pool);
       Dump (Cells);
       Dump (Imp);
+      Dump (Frn);
       Dump (Syms);
       Dump (Exp);
       Ada.Streams.Stream_IO.Close (File);
@@ -549,11 +629,13 @@ package body Skit.Handles.Images is
 
          A          : Object_Vectors.Vector;
          Sym        : Object_Vectors.Vector;
+         Frn        : Object_Vectors.Vector;
          Off_Pool   : Offset := -1;
          Off_Cells  : Offset := -1;
          Off_Exp    : Offset := -1;
          Off_Import : Offset := -1;
          Off_Sym    : Offset := -1;
+         Off_Frn    : Offset := -1;
          C          : Offset := 0;
       begin
          Ada.Streams.Stream_IO.Read (File, D, Last);
@@ -605,6 +687,7 @@ package body Skit.Handles.Images is
                      when Section_Exports => Off_Exp    := Off;
                      when Section_Import  => Off_Import := Off;
                      when Section_Symbols => Off_Sym    := Off;
+                     when Section_Foreign => Off_Frn    := Off;
                      when others          => null;
                   end case;
                end;
@@ -637,8 +720,9 @@ package body Skit.Handles.Images is
             end;
          end if;
 
-         --  Cells: reserve N blank cells, then back-patch each from the image.
-         --  Like Install, no collection runs during this build.
+         --  Cells: reserve N blank cells now.  Back-patch is deferred until
+         --  foreign objects exist (a cell may reference one).  Like Install,
+         --  no collection runs during this build.
          declare
             Cursor : Offset := Off_Cells;
             N      : constant Natural := Natural (Get_U32 (D, Cursor));
@@ -646,10 +730,62 @@ package body Skit.Handles.Images is
             for J in 1 .. N loop
                A.Append (This.H.Machine.Append (Skit.I, Skit.I));
             end loop;
-            for J in 1 .. N loop
+         end;
+
+         --  Foreign objects: create each from its class factory in id order.
+         --  Post-order ids mean a child (cell -- already reserved -- or a
+         --  lower-id foreign object) is available when its parent is built.
+         if Off_Frn >= 0 then
+            declare
+               Cursor : Offset := Off_Frn;
+               Count  : constant Natural := Natural (Get_U32 (D, Cursor));
+            begin
+               for J in 1 .. Count loop
+                  declare
+                     Class_Ref   : constant Unsigned_32 := Get_U32 (D, Cursor);
+                     Class       : constant String :=
+                                     Read_Name
+                                       (D, Off_Pool + Offset (Class_Ref));
+                     Child_Count : constant Natural :=
+                                     Natural (Get_U32 (D, Cursor));
+                     Children    : Object_Array (1 .. Child_Count);
+                  begin
+                     for K in Children'Range loop
+                        Children (K) := Get_Object (D, Cursor, A, Sym, Frn);
+                     end loop;
+                     declare
+                        Len   : constant Natural :=
+                                  Natural (Get_U64 (D, Cursor));
+                        Bytes : Byte_Array (1 .. Offset (Len));
+                        Ref   : Foreign_Reference;
+                     begin
+                        for M in Bytes'Range loop
+                           Bytes (M) := D (Cursor);
+                           Cursor := Cursor + 1;
+                        end loop;
+                        Ref := This.H.Machine.Deserialize_Foreign
+                                 (Class, Bytes, Children);
+                        if Ref = null then
+                           raise Image_Error with
+                             "unregistered foreign class: " & Class;
+                        end if;
+                        Frn.Append (This.H.Machine.Bind_Object (Ref));
+                     end;
+                  end;
+               end loop;
+            end;
+         end if;
+
+         --  Cell back-patch (symbols and foreign objects now exist).
+         declare
+            Cursor : Offset := Off_Cells + 4;   --  skip the u32 cell count
+         begin
+            for J in 1 .. Natural (A.Length) loop
                declare
-                  Left  : constant Object := Get_Object (D, Cursor, A, Sym);
-                  Right : constant Object := Get_Object (D, Cursor, A, Sym);
+                  Left  : constant Object :=
+                            Get_Object (D, Cursor, A, Sym, Frn);
+                  Right : constant Object :=
+                            Get_Object (D, Cursor, A, Sym, Frn);
                begin
                   This.H.Machine.Set_Left (A (J - 1), Left);
                   This.H.Machine.Set_Right (A (J - 1), Right);
@@ -699,7 +835,8 @@ package body Skit.Handles.Images is
                   Name     : constant String :=
                                Read_Name
                                  (D, Off_Pool + Offset (Name_Ref));
-                  Value    : constant Object := Get_Object (D, Cursor, A, Sym);
+                  Value    : constant Object :=
+                               Get_Object (D, Cursor, A, Sym, Frn);
                begin
                   This.Bind (Name, Value);
                end;

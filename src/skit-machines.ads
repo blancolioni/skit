@@ -4,6 +4,8 @@ private with Ada.Containers.Ordered_Maps;
 private with Ada.Containers.Vectors;
 private with Skit.Memory;
 
+with Ada.Streams;
+
 private package Skit.Machines is
 
    --  Inline_Always subprograms keep a documented Pre that, with assertions
@@ -106,6 +108,22 @@ private package Skit.Machines is
    procedure Free_Foreign_Objects (This : in out Instance'Class);
    --  Free every remaining foreign object (dispatching Free + reclaim).  For
    --  machine shutdown.
+
+   function Foreign_Object_Ref
+     (This : Instance'Class;
+      O    : Object)
+      return Foreign_Reference
+     with Pre => Is_Foreign_Object (O);
+   --  The bound reference behind a foreign object (to serialize it).
+
+   function Deserialize_Foreign
+     (This     : Instance'Class;
+      Class    : String;
+      Bytes    : Ada.Streams.Stream_Element_Array;
+      Children : Object_Array)
+      return Foreign_Reference;
+   --  Reconstruct a foreign object via the factory registered under Class;
+   --  null if no such class is registered.
 
    procedure Evaluate
      (This      : in out Instance'Class;

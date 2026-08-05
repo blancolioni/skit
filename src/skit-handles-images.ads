@@ -9,11 +9,13 @@ package Skit.Handles.Images is
    --  a named-import relocation table, a symbol table and exports, with
    --  internal-reference relocation.  Cell contents may be applications,
    --  integers, floats, the VM-fixed combinators, symbols (re-interned by name
-   --  into the loading handle), and primitive functions (emitted as by-name
-   --  imports and resolved against the loading handle's environment).  Foreign
-   --  objects, annotations, the interface fingerprint and the checksum are not
-   --  yet handled; the writer raises Image_Error rather than emit an object it
-   --  cannot round-trip (and on a primitive with no bound name).
+   --  into the loading handle), primitive functions (emitted as by-name imports
+   --  and resolved against the loading handle's environment), and foreign
+   --  objects (serialized as class + bytes + child vector, rebuilt on load by
+   --  the class factory registered in the loading handle).  Annotations, the
+   --  interface fingerprint and the checksum are not yet handled; the writer
+   --  raises Image_Error rather than emit an object it cannot round-trip (a
+   --  primitive with no bound name, or a cyclic foreign object).
 
    type Name_Array is
      array (Positive range <>) of Ada.Strings.Unbounded.Unbounded_String;

@@ -1070,6 +1070,36 @@ package body Skit.Machines is
       end loop;
    end Sweep_Foreign;
 
+   -------------------------
+   -- Foreign_Object_Ref --
+   -------------------------
+
+   function Foreign_Object_Ref
+     (This : Instance'Class;
+      O    : Object)
+      return Foreign_Reference
+   is (This.Foreign (Foreign_Object_Index (O)).Ref);
+
+   -------------------------
+   -- Deserialize_Foreign --
+   -------------------------
+
+   function Deserialize_Foreign
+     (This     : Instance'Class;
+      Class    : String;
+      Bytes    : Ada.Streams.Stream_Element_Array;
+      Children : Object_Array)
+      return Foreign_Reference
+   is
+      Pos : constant Class_Maps.Cursor := This.Classes.Find (Class);
+   begin
+      if Class_Maps.Has_Element (Pos) then
+         return Class_Maps.Element (Pos) (Bytes, Children);
+      else
+         return null;
+      end if;
+   end Deserialize_Foreign;
+
    --------------------------
    -- Free_Foreign_Objects --
    --------------------------

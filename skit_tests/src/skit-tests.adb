@@ -4,6 +4,7 @@ with Ada.Directories;
 with Ada.Streams;
 with Ada.Wide_Wide_Text_IO;
 with Ada.Text_IO;
+with Interfaces;
 
 with Ada.Strings.Unbounded;
 
@@ -20,6 +21,11 @@ package body Skit.Tests is
    --  objects without dereferencing a reclaimed one.
 
    Freed : array (1 .. 8) of Boolean := [others => False];
+
+   --  Observers for the image round-trip: what the class factory last rebuilt.
+   Last_Des_Id          : Natural := 0;
+   Last_Des_Child_Count : Natural := 0;
+   Last_Des_Child       : Object  := Undefined;
 
    type Box (N : Natural) is new Foreign_Object_Interface with
       record
@@ -39,6 +45,13 @@ package body Skit.Tests is
    overriding procedure Free (This : in out Box);
 
    overriding function Image (This : Box) return String;
+
+   --  A class factory: rebuild a Box from its serialized Id and its (already
+   --  relocated) children, recording what it saw in the observers above.
+   function Box_Deserialize
+     (Bytes    : Ada.Streams.Stream_Element_Array;
+      Children : Object_Array)
+      return Foreign_Reference;
 
    Handle : Skit.Handles.Handle;
 
@@ -575,11 +588,42 @@ package body Skit.Tests is
    overriding function Serialize (This : Box)
       return Ada.Streams.Stream_Element_Array
    is
-      pragma Unreferenced (This);
-      Empty : Ada.Streams.Stream_Element_Array (1 .. 0);
+      use Ada.Streams;
+      use Interfaces;
+      R : Stream_Element_Array (1 .. 4);
+      V : Unsigned_32 := Unsigned_32 (This.Id);
    begin
-      return Empty;
+      for I in R'Range loop
+         R (I) := Stream_Element (V and 16#FF#);
+         V := Shift_Right (V, 8);
+      end loop;
+      return R;
    end Serialize;
+
+   ---------------------
+   -- Box_Deserialize --
+   ---------------------
+
+   function Box_Deserialize
+     (Bytes    : Ada.Streams.Stream_Element_Array;
+      Children : Object_Array)
+      return Foreign_Reference
+   is
+      use Interfaces;
+      V : Unsigned_32 := 0;
+   begin
+      for I in reverse Bytes'Range loop
+         V := Shift_Left (V, 8) or Unsigned_32 (Bytes (I));
+      end loop;
+      Last_Des_Id          := Natural (V);
+      Last_Des_Child_Count := Children'Length;
+      if Children'Length >= 1 then
+         Last_Des_Child := Children (Children'First);
+      end if;
+      return new Box'(N        => Children'Length,
+                      Id       => Positive (V),
+                      Children => Children);
+   end Box_Deserialize;
 
    -----------
    -- Visit --
@@ -1124,6 +1168,52 @@ package body Skit.Tests is
                    and then Hr.Left (GB) = Hr.Intern_Symbol ("foo")
                    and then Hr.Right (GB) = To_Object (1));
          end;
+      end;
+
+      --  Foreign objects: a Box (carrying an Id and a child cell) serializes
+      --  via its class + bytes + child vector, and is rebuilt on load by the
+      --  factory registered for its class.
+      declare
+         Hw   : constant Skit.Handles.Handle := New_Machine;
+         Hr   : constant Skit.Handles.Handle := New_Machine;
+         Hbad : constant Skit.Handles.Handle := New_Machine;
+
+         Child : constant Object :=
+                   Hw.Install
+                     (Skit.Compiler.Compile
+                        (T.Apply (T.Combinator (Skit.K), T.Const (5))),
+                      No_Resolve'Access);
+         Bw    : constant Foreign_Reference :=
+                   new Box'(N => 1, Id => 77, Children => [Child]);
+         Obj_B : constant Object := Hw.Bind_Object (Bw);
+
+         Caught : Boolean := False;
+      begin
+         Hw.Bind ("b", Obj_B);
+         Img.Write (Hw, Path, [1 => U ("b")]);
+
+         Hr.Register_Object_Class ("box", Box_Deserialize'Access);
+         Last_Des_Id          := 0;
+         Last_Des_Child_Count := 0;
+         Last_Des_Child       := Undefined;
+         Img.Read (Hr, Path);
+
+         Check ("image: foreign object rebuilt",
+                Is_Foreign_Object (Hr.Lookup ("b")));
+         Check ("image: foreign bytes round-trip", Last_Des_Id = 77);
+         Check ("image: foreign child count", Last_Des_Child_Count = 1);
+         Check ("image: foreign child relocated",
+                Is_Application (Last_Des_Child)
+                and then Hr.Left (Last_Des_Child) = Skit.K
+                and then Hr.Right (Last_Des_Child) = To_Object (5));
+
+         --  Reader without the class factory: cannot rebuild.
+         begin
+            Img.Read (Hbad, Path);
+         exception
+            when Img.Image_Error => Caught := True;
+         end;
+         Check ("image: unregistered foreign class rejected", Caught);
       end;
 
       if Ada.Directories.Exists (Path) then
