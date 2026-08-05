@@ -2,6 +2,7 @@ with Ada.Command_Line;
 with Ada.Containers.Doubly_Linked_Lists;
 with Ada.Directories;
 with Ada.Streams;
+with Ada.Streams.Stream_IO;
 with Ada.Wide_Wide_Text_IO;
 with Ada.Text_IO;
 with Interfaces;
@@ -1214,6 +1215,74 @@ package body Skit.Tests is
             when Img.Image_Error => Caught := True;
          end;
          Check ("image: unregistered foreign class rejected", Caught);
+      end;
+
+      --  Checksum: a single flipped byte in the body is detected on load.
+      declare
+         Hw     : constant Skit.Handles.Handle := New_Machine;
+         Hr     : constant Skit.Handles.Handle := New_Machine;
+         Caught : Boolean := False;
+      begin
+         Hw.Bind ("n", To_Object (7));
+         Img.Write (Hw, Path, [1 => U ("n")]);
+         declare
+            use type Ada.Streams.Stream_Element;
+            use type Ada.Streams.Stream_Element_Offset;
+            package SIO renames Ada.Streams.Stream_IO;
+            F : SIO.File_Type;
+         begin
+            SIO.Open (F, SIO.In_File, Path);
+            declare
+               Len  : constant SIO.Count := SIO.Size (F);
+               D    : Ada.Streams.Stream_Element_Array
+                        (1 .. Ada.Streams.Stream_Element_Offset (Len));
+               Last : Ada.Streams.Stream_Element_Offset;
+               Mid  : constant Ada.Streams.Stream_Element_Offset :=
+                        1 + D'Length / 2;
+            begin
+               SIO.Read (F, D, Last);
+               SIO.Close (F);
+               D (Mid) := D (Mid) xor 16#FF#;
+               SIO.Create (F, SIO.Out_File, Path);
+               SIO.Write (F, D);
+               SIO.Close (F);
+            end;
+         end;
+         begin
+            Img.Read (Hr, Path);
+         exception
+            when Img.Image_Error => Caught := True;
+         end;
+         Check ("image: corrupted image rejected by checksum", Caught);
+      end;
+
+      --  Fingerprint: over export names.  Same names -> same fingerprint even
+      --  with different contents; different names -> different fingerprint.
+      declare
+         use type Interfaces.Unsigned_32;
+
+         H1 : constant Skit.Handles.Handle := New_Machine;
+         H2 : constant Skit.Handles.Handle := New_Machine;
+         H3 : constant Skit.Handles.Handle := New_Machine;
+         Fp_AB, Fp_AB2, Fp_AC : Interfaces.Unsigned_32;
+      begin
+         H1.Bind ("a", To_Object (1));
+         H1.Bind ("b", To_Object (2));
+         Img.Write (H1, Path, [U ("a"), U ("b")]);
+         Fp_AB := Img.Fingerprint (Path);
+
+         H2.Bind ("a", To_Object (99));   --  same names, different values
+         H2.Bind ("b", To_Object (100));
+         Img.Write (H2, Path, [U ("a"), U ("b")]);
+         Fp_AB2 := Img.Fingerprint (Path);
+
+         H3.Bind ("a", To_Object (1));
+         H3.Bind ("c", To_Object (2));    --  different export name
+         Img.Write (H3, Path, [U ("a"), U ("c")]);
+         Fp_AC := Img.Fingerprint (Path);
+
+         Check ("image: fingerprint stable across contents", Fp_AB = Fp_AB2);
+         Check ("image: fingerprint changes with exports", Fp_AB /= Fp_AC);
       end;
 
       if Ada.Directories.Exists (Path) then

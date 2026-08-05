@@ -1,10 +1,10 @@
 with Ada.Containers.Indefinite_Ordered_Maps;
+with Ada.Containers.Indefinite_Ordered_Sets;
 with Ada.Containers.Ordered_Maps;
 with Ada.Containers.Ordered_Sets;
 with Ada.Containers.Vectors;
 with Ada.Streams.Stream_IO;
 with Ada.Unchecked_Conversion;
-with Interfaces;
 
 with Skit.Machines;
 
@@ -33,14 +33,27 @@ package body Skit.Handles.Images is
    Kind_Symbol      : constant := 4;
    Kind_Foreign     : constant := 5;
 
-   Section_Pool    : constant := 0;
-   Section_Cells   : constant := 1;
-   Section_Exports : constant := 2;
-   Section_Import  : constant := 3;
-   Section_Symbols : constant := 4;
-   Section_Foreign : constant := 6;
+   Section_Pool        : constant := 0;
+   Section_Cells       : constant := 1;
+   Section_Exports     : constant := 2;
+   Section_Import      : constant := 3;
+   Section_Symbols     : constant := 4;
+   Section_Foreign     : constant := 6;
+   Section_Fingerprint : constant := 7;
 
    Magic : constant String := "SKIX";
+
+   Hash_FNV1a_32 : constant := 1;   --  fingerprint / checksum algorithm id
+
+   --  FNV-1a (32-bit): a small, dependency-free rolling hash used for both the
+   --  interface fingerprint and the integrity checksum.
+   FNV_Offset : constant Unsigned_32 := 16#811C_9DC5#;
+   FNV_Prime  : constant Unsigned_32 := 16#0100_0193#;
+
+   procedure Hash_Byte (H : in out Unsigned_32; B : Byte) is
+   begin
+      H := (H xor Unsigned_32 (B)) * FNV_Prime;
+   end Hash_Byte;
 
    function LF_To_U64 is
      new Ada.Unchecked_Conversion (Long_Float, Unsigned_64);
@@ -433,11 +446,15 @@ package body Skit.Handles.Images is
          end if;
       end Scan;
 
+      package String_Sets is
+        new Ada.Containers.Indefinite_Ordered_Sets (String);
+
       Cells   : Byte_Vectors.Vector;
       Imp     : Byte_Vectors.Vector;
       Frn     : Byte_Vectors.Vector;
       Syms    : Byte_Vectors.Vector;
       Exp     : Byte_Vectors.Vector;
+      Fp      : Byte_Vectors.Vector;
       Header  : Byte_Vectors.Vector;
       Mod_Ref : Unsigned_32;
 
@@ -551,6 +568,26 @@ package body Skit.Handles.Images is
          end;
       end loop;
 
+      --  Interface fingerprint: FNV-1a over the sorted, unique export names,
+      --  for stale-link detection.  (Annotations, once emitted, join this.)
+      declare
+         Names : String_Sets.Set;
+         H     : Unsigned_32 := FNV_Offset;
+      begin
+         for E of Exports loop
+            Names.Include (To_String (E));
+         end loop;
+         for Name of Names loop
+            for Ch of Name loop
+               Hash_Byte (H, Byte (Character'Pos (Ch)));
+            end loop;
+            Hash_Byte (H, 0);
+         end loop;
+         Put_U8 (Fp, Hash_FNV1a_32);
+         Put_U8 (Fp, 4);
+         Put_U32 (Fp, H);
+      end;
+
       --  Header: fixed 20 bytes, then a 4-entry section directory.  Interning
       --  above is complete, so the pool is final and its offsets are stable.
       for Ch of Magic loop
@@ -564,10 +601,10 @@ package body Skit.Handles.Images is
       Put_U8 (Header, 0);     --  endianness (little)
       Put_U16 (Header, 0);    --  flags
       Put_U32 (Header, Mod_Ref);
-      Put_U16 (Header, 6);    --  section_count
+      Put_U16 (Header, 7);    --  section_count
 
       declare
-         Dir_Size  : constant Natural := 6 * (2 + 8 + 8);
+         Dir_Size  : constant Natural := 7 * (2 + 8 + 8);
          Base      : constant Natural := 20 + Dir_Size;
          Off_Pool  : constant Natural := Base;
          Off_Cells : constant Natural := Off_Pool + Natural (Pool.Length);
@@ -575,6 +612,7 @@ package body Skit.Handles.Images is
          Off_Frn   : constant Natural := Off_Imp + Natural (Imp.Length);
          Off_Syms  : constant Natural := Off_Frn + Natural (Frn.Length);
          Off_Exp   : constant Natural := Off_Syms + Natural (Syms.Length);
+         Off_Fp    : constant Natural := Off_Exp + Natural (Exp.Length);
       begin
          Put_U16 (Header, Section_Pool);
          Put_U64 (Header, Unsigned_64 (Off_Pool));
@@ -594,18 +632,46 @@ package body Skit.Handles.Images is
          Put_U16 (Header, Section_Exports);
          Put_U64 (Header, Unsigned_64 (Off_Exp));
          Put_U64 (Header, Unsigned_64 (Exp.Length));
+         Put_U16 (Header, Section_Fingerprint);
+         Put_U64 (Header, Unsigned_64 (Off_Fp));
+         Put_U64 (Header, Unsigned_64 (Fp.Length));
       end;
 
-      Ada.Streams.Stream_IO.Create
-        (File, Ada.Streams.Stream_IO.Out_File, Path);
-      Dump (Header);
-      Dump (Pool);
-      Dump (Cells);
-      Dump (Imp);
-      Dump (Frn);
-      Dump (Syms);
-      Dump (Exp);
-      Ada.Streams.Stream_IO.Close (File);
+      --  Assemble the whole image, then append an integrity checksum trailer
+      --  (algo, length, sum) computed over everything before it.
+      declare
+         Full : Byte_Vectors.Vector;
+         Sum  : Unsigned_32 := FNV_Offset;
+
+         procedure Append_All (V : Byte_Vectors.Vector);
+
+         procedure Append_All (V : Byte_Vectors.Vector) is
+         begin
+            for B of V loop
+               Full.Append (B);
+            end loop;
+         end Append_All;
+      begin
+         Append_All (Header);
+         Append_All (Pool);
+         Append_All (Cells);
+         Append_All (Imp);
+         Append_All (Frn);
+         Append_All (Syms);
+         Append_All (Exp);
+         Append_All (Fp);
+         for B of Full loop
+            Hash_Byte (Sum, B);
+         end loop;
+         Put_U8 (Full, Hash_FNV1a_32);
+         Put_U8 (Full, 4);
+         Put_U32 (Full, Sum);
+
+         Ada.Streams.Stream_IO.Create
+           (File, Ada.Streams.Stream_IO.Out_File, Path);
+         Dump (Full);
+         Ada.Streams.Stream_IO.Close (File);
+      end;
    end Write;
 
    ----------
@@ -641,9 +707,28 @@ package body Skit.Handles.Images is
          Ada.Streams.Stream_IO.Read (File, D, Last);
          Ada.Streams.Stream_IO.Close (File);
 
-         if D'Length < 20 then
+         if D'Length < 26 then
             raise Image_Error with "image too short";
          end if;
+
+         --  Integrity: recompute the checksum over everything but the 6-byte
+         --  trailer and compare with the stored sum.
+         declare
+            Body_Last : constant Offset := D'Last - 6;
+            Cursor    : Offset := Body_Last + 1;
+            Algo      : constant Unsigned_8 := Get_U8 (D, Cursor);
+            Length_B  : constant Unsigned_8 := Get_U8 (D, Cursor);
+            Stored    : constant Unsigned_32 := Get_U32 (D, Cursor);
+            Sum       : Unsigned_32 := FNV_Offset;
+         begin
+            pragma Unreferenced (Algo, Length_B);
+            for I in D'First .. Body_Last loop
+               Hash_Byte (Sum, D (I));
+            end loop;
+            if Sum /= Stored then
+               raise Image_Error with "checksum mismatch";
+            end if;
+         end;
          for J in Magic'Range loop
             if D (Offset (J - Magic'First))
               /= Byte (Character'Pos (Magic (J)))
@@ -844,5 +929,54 @@ package body Skit.Handles.Images is
          end;
       end;
    end Read;
+
+   -----------------
+   -- Fingerprint --
+   -----------------
+
+   function Fingerprint (Path : String) return Interfaces.Unsigned_32 is
+      File : Ada.Streams.Stream_IO.File_Type;
+   begin
+      Ada.Streams.Stream_IO.Open
+        (File, Ada.Streams.Stream_IO.In_File, Path);
+      declare
+         Length : constant Ada.Streams.Stream_IO.Count :=
+                    Ada.Streams.Stream_IO.Size (File);
+         D      : Byte_Array (0 .. Offset (Length) - 1);
+         Last   : Offset;
+         C      : Offset := 18;   --  section_count follows the 18-byte prefix
+         Off_Fp : Offset := -1;
+      begin
+         Ada.Streams.Stream_IO.Read (File, D, Last);
+         Ada.Streams.Stream_IO.Close (File);
+         declare
+            Sections : constant Unsigned_16 := Get_U16 (D, C);
+         begin
+            for J in 1 .. Natural (Sections) loop
+               declare
+                  Kind : constant Unsigned_16 := Get_U16 (D, C);
+                  Off  : constant Offset := Offset (Get_U64 (D, C));
+                  Len  : constant Unsigned_64 := Get_U64 (D, C);
+               begin
+                  pragma Unreferenced (Len);
+                  if Kind = Section_Fingerprint then
+                     Off_Fp := Off;
+                  end if;
+               end;
+            end loop;
+         end;
+         if Off_Fp < 0 then
+            raise Image_Error with "image has no fingerprint";
+         end if;
+         declare
+            Cursor : Offset := Off_Fp;
+            Algo   : constant Unsigned_8 := Get_U8 (D, Cursor);
+            Length_B : constant Unsigned_8 := Get_U8 (D, Cursor);
+         begin
+            pragma Unreferenced (Algo, Length_B);
+            return Get_U32 (D, Cursor);
+         end;
+      end;
+   end Fingerprint;
 
 end Skit.Handles.Images;

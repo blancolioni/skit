@@ -8,22 +8,35 @@ execution image. Read ADR 0002 first for the *why*; this file is the *what*.
 Status: sketch. Field widths and section kinds are provisional until the writer
 and two-pass loader are implemented.
 
-**Implementation status.** A first reader/writer lives in
-[skit-handles-images.adb](../src/skit-handles-images.adb). It handles the
-Header, StringPool, Cells, ImportReloc and Exports sections and
-internal-reference relocation, for cells containing applications, integers,
-floats and the VM-fixed combinators. Primitive functions are emitted as
-by-name imports: an import slot holds the `Undefined` sentinel in the Cells
-section and an `(cell, side) -> name` entry in ImportReloc, resolved on load
-against the loading handle's environment (single-module — sibling-export
-resolution is not yet a separate pass). The writer's object → name map is built
-by reverse-mapping the handle's bound names, a pragmatic stand-in until the
-compiler emits imports symbolically (ADR 0002, decision B). Not yet
-implemented: SymbolAtoms, ForeignObjects, Annotations, the Fingerprint and the
-Checksum — the writer raises `Image_Error` on a symbol, a foreign object, or a
-primitive with no bound name. The on-disk object encoding is a 1-byte kind tag
-(application / integer / float / combinator) plus its payload, rather than a
-raw object word; raw-word framing arrives with the wider id-class support.
+**Implementation status.** A reader/writer lives in
+[skit-handles-images.adb](../src/skit-handles-images.adb), covering Header,
+StringPool, Cells, ImportReloc, ForeignObjects, SymbolAtoms, Exports, the
+interface Fingerprint and the Checksum trailer, with internal-reference
+relocation. The on-disk object encoding is a 1-byte kind tag plus payload
+(application / integer / float / combinator / symbol / foreign), rather than a
+raw object word.
+
+- **Primitive functions** are emitted as by-name imports: the slot holds the
+  `Undefined` sentinel in Cells and an `(cell, side) -> name` entry in
+  ImportReloc, resolved on load against the loading handle's environment. The
+  writer's object → name map is built by reverse-mapping the handle's bound
+  names — a stand-in until the compiler emits imports symbolically (ADR 0002,
+  decision B).
+- **Symbols** are re-interned by name into the loading handle via a SymbolAtoms
+  (local id → name) table.
+- **Foreign objects** are class name + opaque `Serialize` bytes + a relocated
+  child vector; the writer assigns their local ids in post-order (rejecting
+  cyclic foreign graphs) and the loader rebuilds each via the class factory
+  registered in the handle. Cells are reserved, foreign objects created, then
+  cells back-patched, so cells and foreign objects re-link mutually.
+- **Fingerprint / Checksum** use FNV-1a-32: the fingerprint hashes the sorted
+  export names; the checksum covers the whole image and is verified on load.
+
+Not yet implemented: per-export **Annotations** and the cross-module
+**sibling-export** link pass (imports resolve only against the loading handle's
+environment). The writer raises `Image_Error` on a primitive with no bound name
+or a cyclic foreign object; the loader raises on a checksum mismatch, an
+unresolved import, or an unregistered foreign class.
 
 ## Conventions
 
