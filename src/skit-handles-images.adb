@@ -1,5 +1,4 @@
 with Ada.Containers.Indefinite_Ordered_Maps;
-with Ada.Containers.Indefinite_Ordered_Sets;
 with Ada.Containers.Ordered_Maps;
 with Ada.Containers.Ordered_Sets;
 with Ada.Containers.Vectors;
@@ -12,6 +11,7 @@ with Skit.Machines;
 package body Skit.Handles.Images is
 
    use Interfaces;
+   use type Ada.Containers.Count_Type;
    use type Ada.Streams.Stream_Element;
    use type Ada.Streams.Stream_Element_Offset;
 
@@ -39,6 +39,7 @@ package body Skit.Handles.Images is
    Section_Exports     : constant := 2;
    Section_Import      : constant := 3;
    Section_Symbols     : constant := 4;
+   Section_Annotations : constant := 5;
    Section_Foreign     : constant := 6;
    Section_Fingerprint : constant := 7;
 
@@ -234,10 +235,12 @@ package body Skit.Handles.Images is
    -----------
 
    procedure Write
-     (This        : Handle'Class;
-      Path        : String;
-      Exports     : Name_Array;
-      Module_Name : String := "module")
+     (This          : Handle'Class;
+      Path          : String;
+      Exports       : Name_Array;
+      Module_Name   : String := "module";
+      Annotation_Of : access function (Export_Name : String)
+                        return Ada.Streams.Stream_Element_Array := null)
    is
       use Ada.Strings.Unbounded;
 
@@ -272,6 +275,19 @@ package body Skit.Handles.Images is
 
       package Payload_Sets is
         new Ada.Containers.Ordered_Sets (Object_Payload);
+
+      --  Per-export annotation bytes, collected once and shared by the
+      --  Annotations section and the interface fingerprint below.  The
+      --  vector is empty for an export with no annotation (Annotation_Of is
+      --  null, or returned a zero-length result) -- it still contributes an
+      --  entry (with empty bytes) so the fingerprint covers every export.
+      type Ann_Info is
+         record
+            Bytes : Byte_Vectors.Vector;
+         end record;
+
+      package Name_Ann_Maps is
+        new Ada.Containers.Indefinite_Ordered_Maps (String, Ann_Info);
 
       --  A foreign object to serialize: its bound reference and its Object
       --  children (collected via Visit), in Visit order.
@@ -447,14 +463,12 @@ package body Skit.Handles.Images is
          end if;
       end Scan;
 
-      package String_Sets is
-        new Ada.Containers.Indefinite_Ordered_Sets (String);
-
       Cells   : Byte_Vectors.Vector;
       Imp     : Byte_Vectors.Vector;
       Frn     : Byte_Vectors.Vector;
       Syms    : Byte_Vectors.Vector;
       Exp     : Byte_Vectors.Vector;
+      Ann     : Byte_Vectors.Vector;
       Fp      : Byte_Vectors.Vector;
       Header  : Byte_Vectors.Vector;
       Mod_Ref : Unsigned_32;
@@ -569,24 +583,78 @@ package body Skit.Handles.Images is
          end;
       end loop;
 
-      --  Interface fingerprint: FNV-1a over the sorted, unique export names,
-      --  for stale-link detection.  (Annotations, once emitted, join this.)
+      --  Collect each export's annotation bytes once, keyed and sorted by
+      --  name (Ordered_Maps iterates in key order).  Every export gets an
+      --  entry, even with empty Bytes, so the fingerprint below covers the
+      --  full export set regardless of which ones carry an annotation.
       declare
-         Names : String_Sets.Set;
-         H     : Unsigned_32 := FNV_Offset;
+         Ann_Map : Name_Ann_Maps.Map;
       begin
          for E of Exports loop
-            Names.Include (To_String (E));
+            declare
+               Name : constant String := To_String (E);
+            begin
+               if not Ann_Map.Contains (Name) then
+                  declare
+                     Info : Ann_Info;
+                  begin
+                     if Annotation_Of /= null then
+                        for X of Annotation_Of (Name) loop
+                           Info.Bytes.Append (X);
+                        end loop;
+                     end if;
+                     Ann_Map.Insert (Name, Info);
+                  end;
+               end if;
+            end;
          end loop;
-         for Name of Names loop
-            for Ch of Name loop
-               Hash_Byte (H, Byte (Character'Pos (Ch)));
+
+         --  Annotations section: per-export opaque bytes.  An export with no
+         --  bytes is simply absent from this section (annotations are
+         --  optional per the format).
+         declare
+            Count : Natural := 0;
+         begin
+            for C in Ann_Map.Iterate loop
+               if Name_Ann_Maps.Element (C).Bytes.Length > 0 then
+                  Count := Count + 1;
+               end if;
             end loop;
-            Hash_Byte (H, 0);
-         end loop;
-         Put_U8 (Fp, Hash_FNV1a_32);
-         Put_U8 (Fp, 4);
-         Put_U32 (Fp, H);
+            Put_U32 (Ann, Unsigned_32 (Count));
+            for C in Ann_Map.Iterate loop
+               declare
+                  Info : constant Ann_Info := Name_Ann_Maps.Element (C);
+               begin
+                  if Info.Bytes.Length > 0 then
+                     Put_U32 (Ann, Intern (Name_Ann_Maps.Key (C)));
+                     Put_U64 (Ann, Unsigned_64 (Info.Bytes.Length));
+                     for X of Info.Bytes loop
+                        Ann.Append (X);
+                     end loop;
+                  end if;
+               end;
+            end loop;
+         end;
+
+         --  Interface fingerprint: FNV-1a over the sorted export names and
+         --  their annotation bytes, for stale-link detection.
+         declare
+            H : Unsigned_32 := FNV_Offset;
+         begin
+            for C in Ann_Map.Iterate loop
+               for Ch of Name_Ann_Maps.Key (C) loop
+                  Hash_Byte (H, Byte (Character'Pos (Ch)));
+               end loop;
+               Hash_Byte (H, 0);
+               for X of Name_Ann_Maps.Element (C).Bytes loop
+                  Hash_Byte (H, X);
+               end loop;
+               Hash_Byte (H, 0);
+            end loop;
+            Put_U8 (Fp, Hash_FNV1a_32);
+            Put_U8 (Fp, 4);
+            Put_U32 (Fp, H);
+         end;
       end;
 
       --  Header: fixed 20 bytes, then a 4-entry section directory.  Interning
@@ -602,10 +670,10 @@ package body Skit.Handles.Images is
       Put_U8 (Header, 0);     --  endianness (little)
       Put_U16 (Header, 0);    --  flags
       Put_U32 (Header, Mod_Ref);
-      Put_U16 (Header, 7);    --  section_count
+      Put_U16 (Header, 8);    --  section_count
 
       declare
-         Dir_Size  : constant Natural := 7 * (2 + 8 + 8);
+         Dir_Size  : constant Natural := 8 * (2 + 8 + 8);
          Base      : constant Natural := 20 + Dir_Size;
          Off_Pool  : constant Natural := Base;
          Off_Cells : constant Natural := Off_Pool + Natural (Pool.Length);
@@ -613,7 +681,8 @@ package body Skit.Handles.Images is
          Off_Frn   : constant Natural := Off_Imp + Natural (Imp.Length);
          Off_Syms  : constant Natural := Off_Frn + Natural (Frn.Length);
          Off_Exp   : constant Natural := Off_Syms + Natural (Syms.Length);
-         Off_Fp    : constant Natural := Off_Exp + Natural (Exp.Length);
+         Off_Ann   : constant Natural := Off_Exp + Natural (Exp.Length);
+         Off_Fp    : constant Natural := Off_Ann + Natural (Ann.Length);
       begin
          Put_U16 (Header, Section_Pool);
          Put_U64 (Header, Unsigned_64 (Off_Pool));
@@ -633,6 +702,9 @@ package body Skit.Handles.Images is
          Put_U16 (Header, Section_Exports);
          Put_U64 (Header, Unsigned_64 (Off_Exp));
          Put_U64 (Header, Unsigned_64 (Exp.Length));
+         Put_U16 (Header, Section_Annotations);
+         Put_U64 (Header, Unsigned_64 (Off_Ann));
+         Put_U64 (Header, Unsigned_64 (Ann.Length));
          Put_U16 (Header, Section_Fingerprint);
          Put_U64 (Header, Unsigned_64 (Off_Fp));
          Put_U64 (Header, Unsigned_64 (Fp.Length));
@@ -660,6 +732,7 @@ package body Skit.Handles.Images is
          Append_All (Frn);
          Append_All (Syms);
          Append_All (Exp);
+         Append_All (Ann);
          Append_All (Fp);
          for B of Full loop
             Hash_Byte (Sum, B);
@@ -699,9 +772,13 @@ package body Skit.Handles.Images is
    --  its exports -- but leave its imports as sentinels for pass 2.
 
    procedure Load_Module
-     (This : Handle'Class;
-      Path : String;
-      M    : out Module_State)
+     (This       : Handle'Class;
+      Path       : String;
+      M          : out Module_State;
+      Annotation : access procedure
+                     (Export_Name : String;
+                      Bytes       : Ada.Streams.Stream_Element_Array)
+                     := null)
    is
       File : Ada.Streams.Stream_IO.File_Type;
    begin
@@ -727,6 +804,7 @@ package body Skit.Handles.Images is
          Off_Import : Offset := -1;
          Off_Sym    : Offset := -1;
          Off_Frn    : Offset := -1;
+         Off_Ann    : Offset := -1;
          C          : Offset := 0;
       begin
          if D'Length < 26 then
@@ -795,6 +873,7 @@ package body Skit.Handles.Images is
                      when Section_Import  => Off_Import := Off;
                      when Section_Symbols => Off_Sym    := Off;
                      when Section_Foreign => Off_Frn    := Off;
+                     when Section_Annotations => Off_Ann := Off;
                      when others          => null;
                   end case;
                end;
@@ -922,6 +1001,34 @@ package body Skit.Handles.Images is
             end loop;
          end;
 
+         --  Annotations: opaque per-export bytes, handed back to the caller
+         --  uninterpreted.  No relocation is involved -- these are leaf bytes,
+         --  not Objects -- so this can run any time after the pool is known.
+         if Off_Ann >= 0 and then Annotation /= null then
+            declare
+               Cursor : Offset := Off_Ann;
+               Count  : constant Natural := Natural (Get_U32 (D, Cursor));
+            begin
+               for J in 1 .. Count loop
+                  declare
+                     Name_Ref : constant Unsigned_32 := Get_U32 (D, Cursor);
+                     Name     : constant String :=
+                                  Read_Name
+                                    (D, Off_Pool + Offset (Name_Ref));
+                     Len      : constant Natural :=
+                                  Natural (Get_U64 (D, Cursor));
+                     Bytes    : Byte_Array (1 .. Offset (Len));
+                  begin
+                     for K in Bytes'Range loop
+                        Bytes (K) := D (Cursor);
+                        Cursor := Cursor + 1;
+                     end loop;
+                     Annotation.all (Name, Bytes);
+                  end;
+               end loop;
+            end;
+         end if;
+
          M.Off_Import := Off_Import;
          M.Off_Pool   := Off_Pool;
       end;
@@ -975,12 +1082,16 @@ package body Skit.Handles.Images is
    ----------
 
    procedure Read
-     (This : Handle'Class;
-      Path : String)
+     (This       : Handle'Class;
+      Path       : String;
+      Annotation : access procedure
+                     (Export_Name : String;
+                      Bytes       : Ada.Streams.Stream_Element_Array)
+                     := null)
    is
       M : Module_State;
    begin
-      Load_Module (This, Path, M);
+      Load_Module (This, Path, M, Annotation);
       Resolve_Imports (This, M);
       Free (M.Data);
    end Read;
@@ -990,15 +1101,19 @@ package body Skit.Handles.Images is
    ----------
 
    procedure Read
-     (This  : Handle'Class;
-      Paths : Name_Array)
+     (This       : Handle'Class;
+      Paths      : Name_Array;
+      Annotation : access procedure
+                     (Export_Name : String;
+                      Bytes       : Ada.Streams.Stream_Element_Array)
+                     := null)
    is
       use Ada.Strings.Unbounded;
       Modules : array (Paths'Range) of Module_State;
    begin
       --  Pass 1: materialize every module and register all their exports.
       for I in Paths'Range loop
-         Load_Module (This, To_String (Paths (I)), Modules (I));
+         Load_Module (This, To_String (Paths (I)), Modules (I), Annotation);
       end loop;
       --  Pass 2: resolve every module's imports against the merged exports.
       for I in Paths'Range loop

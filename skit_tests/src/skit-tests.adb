@@ -1217,6 +1217,86 @@ package body Skit.Tests is
          Check ("image: unregistered foreign class rejected", Caught);
       end;
 
+      --  Annotations: opaque per-export bytes (e.g. Leander's inferred type)
+      --  round-trip verbatim, keyed by export name; an export with none is
+      --  simply absent from the section -- the handler is never called for
+      --  it.
+      declare
+         use type Ada.Streams.Stream_Element;
+         use type Ada.Streams.Stream_Element_Offset;
+
+         Hw : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+
+         N_Annotation : constant Ada.Streams.Stream_Element_Array (1 .. 3) :=
+                          [16#01#, 16#02#, 16#03#];
+         No_Annotation : constant Ada.Streams.Stream_Element_Array (1 .. 0) :=
+                            [];
+
+         function Annotation_For (Name : String)
+           return Ada.Streams.Stream_Element_Array
+         is (if Name = "n" then N_Annotation else No_Annotation);
+
+         Seen_N      : Boolean := False;
+         Seen_M      : Boolean := False;
+         N_Bytes_Len : Natural := 0;
+         N_Byte_1    : Ada.Streams.Stream_Element := 0;
+         N_Byte_2    : Ada.Streams.Stream_Element := 0;
+         N_Byte_3    : Ada.Streams.Stream_Element := 0;
+
+         procedure On_Annotation
+           (Export_Name : String;
+            Bytes       : Ada.Streams.Stream_Element_Array);
+
+         -------------------
+         -- On_Annotation --
+         -------------------
+
+         procedure On_Annotation
+           (Export_Name : String;
+            Bytes       : Ada.Streams.Stream_Element_Array)
+         is
+         begin
+            if Export_Name = "n" then
+               Seen_N := True;
+               N_Bytes_Len := Bytes'Length;
+               if Bytes'Length = 3 then
+                  N_Byte_1 := Bytes (Bytes'First);
+                  N_Byte_2 := Bytes (Bytes'First + 1);
+                  N_Byte_3 := Bytes (Bytes'First + 2);
+               end if;
+            elsif Export_Name = "m" then
+               Seen_M := True;
+            end if;
+         end On_Annotation;
+
+      begin
+         Hw.Bind ("n", To_Object (7));
+         Hw.Bind ("m", To_Object (8));
+         Img.Write
+           (Hw, Path, [U ("n"), U ("m")],
+            Annotation_Of => Annotation_For'Access);
+         Img.Read (Hr, Path, Annotation => On_Annotation'Access);
+         Check ("image: annotation delivered for annotated export", Seen_N);
+         Check ("image: annotation bytes round-trip",
+                N_Bytes_Len = 3
+                and then N_Byte_1 = 16#01#
+                and then N_Byte_2 = 16#02#
+                and then N_Byte_3 = 16#03#);
+         Check ("image: no annotation call for un-annotated export",
+                not Seen_M);
+
+         --  Reading without a handler at all must not raise or otherwise
+         --  choke on a present Annotations section.
+         declare
+            Hr2 : constant Skit.Handles.Handle := New_Machine;
+         begin
+            Img.Read (Hr2, Path);
+            Check ("image: annotation section ignorable without a handler",
+                   Hr2.Lookup ("n") = To_Object (7));
+         end;
+      end;
+
       --  Checksum: a single flipped byte in the body is detected on load.
       declare
          Hw     : constant Skit.Handles.Handle := New_Machine;
@@ -1283,6 +1363,52 @@ package body Skit.Tests is
 
          Check ("image: fingerprint stable across contents", Fp_AB = Fp_AB2);
          Check ("image: fingerprint changes with exports", Fp_AB /= Fp_AC);
+      end;
+
+      --  Fingerprint: also covers annotation bytes -- same names and values
+      --  but different annotation bytes must still change the fingerprint
+      --  (ADR 0002's resolved "Interface fingerprint contents" question).
+      declare
+         use type Interfaces.Unsigned_32;
+
+         H1 : constant Skit.Handles.Handle := New_Machine;
+         H2 : constant Skit.Handles.Handle := New_Machine;
+         H3 : constant Skit.Handles.Handle := New_Machine;
+
+         Bytes_1 : constant Ada.Streams.Stream_Element_Array (1 .. 1) :=
+                     [16#01#];
+         Bytes_2 : constant Ada.Streams.Stream_Element_Array (1 .. 1) :=
+                     [16#02#];
+
+         function Ann_1 (Name : String)
+           return Ada.Streams.Stream_Element_Array
+         is (if Name = "a" then Bytes_1
+             else raise Program_Error);
+
+         function Ann_2 (Name : String)
+           return Ada.Streams.Stream_Element_Array
+         is (if Name = "a" then Bytes_2
+             else raise Program_Error);
+
+         Fp_None, Fp_1, Fp_2 : Interfaces.Unsigned_32;
+      begin
+         H1.Bind ("a", To_Object (1));
+         H2.Bind ("a", To_Object (1));
+         H3.Bind ("a", To_Object (1));
+
+         Img.Write (H1, Path, [1 => U ("a")]);
+         Fp_None := Img.Fingerprint (Path);
+
+         Img.Write (H2, Path, [1 => U ("a")], Annotation_Of => Ann_1'Access);
+         Fp_1 := Img.Fingerprint (Path);
+
+         Img.Write (H3, Path, [1 => U ("a")], Annotation_Of => Ann_2'Access);
+         Fp_2 := Img.Fingerprint (Path);
+
+         Check ("image: fingerprint changes when an annotation is added",
+                Fp_None /= Fp_1);
+         Check ("image: fingerprint changes when annotation bytes differ",
+                Fp_1 /= Fp_2);
       end;
 
       --  Sibling resolution: an import prefers a co-loaded module's export

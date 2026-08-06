@@ -10,11 +10,11 @@ and two-pass loader are implemented.
 
 **Implementation status.** A reader/writer lives in
 [skit-handles-images.adb](../src/skit-handles-images.adb), covering Header,
-StringPool, Cells, ImportReloc, ForeignObjects, SymbolAtoms, Exports, the
-interface Fingerprint and the Checksum trailer, with internal-reference
-relocation. The on-disk object encoding is a 1-byte kind tag plus payload
-(application / integer / float / combinator / symbol / foreign), rather than a
-raw object word.
+StringPool, Cells, ImportReloc, ForeignObjects, SymbolAtoms, Exports,
+Annotations, the interface Fingerprint and the Checksum trailer, with
+internal-reference relocation. The on-disk object encoding is a 1-byte kind tag
+plus payload (application / integer / float / combinator / symbol / foreign),
+rather than a raw object word.
 
 - **Primitive functions** are emitted as by-name imports: the slot holds the
   `Undefined` sentinel in Cells and an `(cell, side) -> name` entry in
@@ -29,19 +29,29 @@ raw object word.
   cyclic foreign graphs) and the loader rebuilds each via the class factory
   registered in the handle. Cells are reserved, foreign objects created, then
   cells back-patched, so cells and foreign objects re-link mutually.
+- **Annotations** are per-export opaque bytes, keyed by name, optional on both
+  sides: `Write` takes an `Annotation_Of` callback (an anonymous
+  access-to-function, like `Install`'s `Resolve`, so a caller may pass a
+  locally nested closure) called once per export — a null access or a
+  zero-length result omits that export from the section entirely. `Read`
+  takes a matching `Annotation` callback invoked once per annotation record
+  found, handing back the raw bytes uninterpreted. No relocation applies:
+  these are opaque leaf bytes, not `Object`s.
 - **Fingerprint / Checksum** use FNV-1a-32: the fingerprint hashes the sorted
-  export names; the checksum covers the whole image and is verified on load.
+  `(export name, annotation bytes)` pairs — every export contributes an entry
+  even with empty bytes, so adding or changing an annotation changes the
+  fingerprint; the checksum covers the whole image and is verified on load.
 - **Multi-module linking** — a `Read` over several images runs the two-pass
   load of the Decision: pass 1 materializes every module and registers all
   their exports (bound ahead of the environment), pass 2 resolves every
   module's imports, so modules may reference one another mutually. Cells are
   reserved for all modules up front (no collection runs).
 
-Not yet implemented: per-export **Annotations**. The writer raises
-`Image_Error` on a primitive with no bound name or a cyclic foreign object; the
-loader raises on a checksum mismatch, an unresolved import, or an unregistered
-foreign class. Duplicate export names across co-loaded modules are currently
-last-wins (the ADR's resolved question calls for a hard error).
+The writer raises `Image_Error` on a primitive with no bound name or a cyclic
+foreign object; the loader raises on a checksum mismatch, an unresolved
+import, or an unregistered foreign class. Duplicate export names across
+co-loaded modules are currently last-wins (the ADR's resolved question calls
+for a hard error).
 
 ## Conventions
 
