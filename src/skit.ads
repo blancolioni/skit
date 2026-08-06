@@ -28,6 +28,13 @@ package Skit is
    function Is_Symbol (X : Object) return Boolean;
    function Is_Undefined (X : Object) return Boolean;
    function Is_Foreign_Object (X : Object) return Boolean;
+   function Is_Primitive_Function (X : Object) return Boolean;
+   --  True for a bare reference to a host-bound primitive (a "foreign
+   --  import ... #name" wrapper), before it is embedded in any application.
+   --  Such an object is build-specific and can never be baked into an image
+   --  directly (see skit/docs/adr/0002-external-skit-representation.md,
+   --  decision B) -- a host that binds a name directly to one (rather than
+   --  to an application built from it) should not export that name.
 
    type User_Data_Interface is limited interface;
 
