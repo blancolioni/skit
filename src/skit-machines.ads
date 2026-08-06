@@ -1,6 +1,10 @@
 private with Ada.Containers.Indefinite_Vectors;
+private with Ada.Containers.Indefinite_Ordered_Maps;
 private with Ada.Containers.Ordered_Maps;
+private with Ada.Containers.Vectors;
 private with Skit.Memory;
+
+with Ada.Streams;
 
 private package Skit.Machines is
 
@@ -48,6 +52,18 @@ private package Skit.Machines is
       App  : Object)
       return Object;
 
+   procedure Set_Left
+     (This : in out Instance'Class;
+      App  : Object;
+      To   : Object)
+     with Pre => Is_Application (App);
+
+   procedure Set_Right
+     (This : in out Instance'Class;
+      App  : Object;
+      To   : Object)
+     with Pre => Is_Application (App);
+
    type Lazy_Argument_Array is array (Positive range <>) of Boolean;
 
    function Primitive
@@ -65,6 +81,49 @@ private package Skit.Machines is
       Name : Object)
       return Object
      with Pre => Is_Symbol (Name);
+
+   procedure Register_Object_Class
+     (This        : in out Instance'Class;
+      Name        : String;
+      Deserialize : Deserializer);
+   --  Register a deserializer factory for foreign objects of class Name.
+
+   function Bind_Object
+     (This : in out Instance'Class;
+      Obj  : not null Foreign_Reference)
+      return Object
+     with Post => Is_Foreign_Object (Bind_Object'Result);
+   --  Take ownership of Obj, store it in the foreign-object registry, and
+   --  return the Primitive-tagged object that references it.  The bound object
+   --  starts pinned (an unconditional GC root) so it survives until it is
+   --  safely stored in a rooted cell; call Unpin once it is.
+
+   procedure Unpin
+     (This : in out Instance'Class;
+      O    : Object)
+     with Pre => Is_Foreign_Object (O);
+   --  Clear the pin on a bound foreign object; thereafter it is kept only
+   --  while reachable from a root.
+
+   procedure Free_Foreign_Objects (This : in out Instance'Class);
+   --  Free every remaining foreign object (dispatching Free + reclaim).  For
+   --  machine shutdown.
+
+   function Foreign_Object_Ref
+     (This : Instance'Class;
+      O    : Object)
+      return Foreign_Reference
+     with Pre => Is_Foreign_Object (O);
+   --  The bound reference behind a foreign object (to serialize it).
+
+   function Deserialize_Foreign
+     (This     : Instance'Class;
+      Class    : String;
+      Bytes    : Ada.Streams.Stream_Element_Array;
+      Children : Object_Array)
+      return Foreign_Reference;
+   --  Reconstruct a foreign object via the factory registered under Class;
+   --  null if no such class is registered.
 
    procedure Evaluate
      (This      : in out Instance'Class;
@@ -87,6 +146,30 @@ private
         Element_Type => Object,
         "<"          => "<");
 
+   --  Foreign-object registry.  A bound object occupies a slot indexed by
+   --  Foreign_Object_Index; the slot's payload band is Foreign_Object_Payload.
+   --  Pinned slots are unconditional GC roots (survive regardless of
+   --  reachability); Marked is the per-collection live flag used by the mark
+   --  and sweep phases.  A null Ref is a free slot, reused via Free_Slots.
+
+   type Foreign_Slot is
+      record
+         Ref    : Foreign_Reference := null;
+         Pinned : Boolean           := False;
+         Marked : Boolean           := False;
+      end record;
+
+   package Foreign_Object_Vectors is
+     new Ada.Containers.Vectors (Natural, Foreign_Slot);
+
+   package Free_Slot_Vectors is
+     new Ada.Containers.Vectors (Natural, Natural);
+
+   package Class_Maps is
+     new Ada.Containers.Indefinite_Ordered_Maps
+       (Key_Type     => String,
+        Element_Type => Deserializer);
+
    subtype Register is Positive range 1 .. 4;
    --  Shared, temporally, between Eval_Combinator argument slots (R (1 ..
    --  Arg_Count), Arg_Count <= 4) and Advance_Primitive's frame/partial
@@ -105,6 +188,9 @@ private
          --  False by Eval_Combinator so the two cannot clobber the shared R.
          Prims             : Primitive_Function_Vectors.Vector;
          Environment       : Environment_Maps.Map;
+         Foreign           : Foreign_Object_Vectors.Vector;
+         Free_Slots        : Free_Slot_Vectors.Vector;
+         Classes           : Class_Maps.Map;
          Alloc_Count       : Natural := 0;
          Active_Cells      : Natural := 0;
          Max_Active_Cells  : Natural := 0;

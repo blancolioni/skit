@@ -1,3 +1,5 @@
+with Ada.Streams;
+
 package Skit is
 
    Word_Size    : constant := 32;
@@ -25,6 +27,14 @@ package Skit is
    function Is_Application (X : Object) return Boolean;
    function Is_Symbol (X : Object) return Boolean;
    function Is_Undefined (X : Object) return Boolean;
+   function Is_Foreign_Object (X : Object) return Boolean;
+   function Is_Primitive_Function (X : Object) return Boolean;
+   --  True for a bare reference to a host-bound primitive (a "foreign
+   --  import ... #name" wrapper), before it is embedded in any application.
+   --  Such an object is build-specific and can never be baked into an image
+   --  directly (see skit/docs/adr/0002-external-skit-representation.md,
+   --  decision B) -- a host that binds a name directly to one (rather than
+   --  to an application built from it) should not export that name.
 
    type User_Data_Interface is limited interface;
 
@@ -51,6 +61,61 @@ package Skit is
       return Object
       is abstract
      with Pre'Class => Arguments'Length = Argument_Count (This);
+
+   --  A foreign object is a host-owned value that lives in the Skit heap as a
+   --  first-class node: it may hold Object children, is traced by the garbage
+   --  collector, and can be serialized into a module image.  The host
+   --  implements this interface, registers a deserializer factory under the
+   --  object's Class_Name, and binds instances into a machine (which returns a
+   --  Primitive-tagged Object referencing the instance).  See
+   --  skit/docs/adr/0002-external-skit-representation.md.
+
+   type Foreign_Object_Interface is limited interface;
+
+   function Class_Name (This : Foreign_Object_Interface) return String
+      is abstract;
+   --  Stable type tag.  Written to the image so the object can be
+   --  deserialized, and the key its deserializer factory is registered under.
+
+   function Serialize (This : Foreign_Object_Interface)
+      return Ada.Streams.Stream_Element_Array
+      is abstract;
+   --  The object's own opaque leaf bytes (may be empty).  Object children are
+   --  NOT encoded here -- they are machine-local references that travel
+   --  separately and relocate on load.
+
+   procedure Visit
+     (This    : in out Foreign_Object_Interface;
+      Process : not null access procedure (Child : in out Object))
+      is abstract;
+   --  Call Process on every Object child, in a fixed, deterministic order.
+   --  One traversal, two callers: the collector passes a Process that forwards
+   --  the child and rewrites it in place (hence Child is in out); the image
+   --  writer passes one that collects the children.  The order is a
+   --  contract -- deserialization consumes the children positionally.
+   --  Process is an anonymous access parameter so the caller may pass a nested
+   --  forwarding closure (the collector's forward routine is local).
+
+   procedure Free (This : in out Foreign_Object_Interface)
+      is abstract;
+   --  Called exactly once, when no live reference to the object remains;
+   --  release any host resources here.
+
+   function Image (This : Foreign_Object_Interface) return String
+      is abstract;
+   --  Per-instance rendering, used by the machine's debug printer.
+
+   --  Reference and factory types for the host side.  The machine owns a bound
+   --  reference: it calls Free and reclaims the object when no live reference
+   --  remains.  A Deserializer reconstructs an object from its opaque bytes
+   --  and its (already relocated) Object children.
+
+   type Foreign_Reference is access all Foreign_Object_Interface'Class;
+
+   type Deserializer is access function
+     (Bytes    : Ada.Streams.Stream_Element_Array;
+      Children : Object_Array)
+      return Foreign_Reference;
 
 private
 
@@ -105,6 +170,13 @@ private
    subtype Primitive_Variable_Payload is
      Object_Payload range 4096 .. 65535;
 
+   --  Foreign objects occupy a distinct, higher payload band; the gap between
+   --  the symbol range above and this one is reserved (room for symbols to
+   --  grow).  ~1M slots, well within the 30-bit payload.
+
+   subtype Foreign_Object_Payload is
+     Object_Payload range 2 ** 20 .. 2 ** 21 - 1;
+
    function Payload (X : Object) return Object_Payload
    is (X.Payload);
 
@@ -126,6 +198,10 @@ private
 
    function Is_Undefined (X : Object) return Boolean
    is (X = Undefined);
+
+   function Is_Foreign_Object (X : Object) return Boolean
+   is (X.Tag = Primitive_Object
+       and then X.Payload in Foreign_Object_Payload);
 
    function Is_Combinator (X : Object) return Boolean
    is (Is_Primitive (X) and then X.Payload in Combinator_Payload);
@@ -157,5 +233,15 @@ private
 
    function Symbol_Index (X : Object) return Natural
    is (Natural (X.Payload - Primitive_Variable_Payload'First));
+
+   --  A foreign object is base + its slot in the machine's foreign-object
+   --  registry; the slot round-trips through these two.
+
+   function Foreign_Object (Index : Natural) return Object
+   is ((Foreign_Object_Payload'First + Object_Payload (Index),
+        Primitive_Object));
+
+   function Foreign_Object_Index (X : Object) return Natural
+   is (Natural (X.Payload - Foreign_Object_Payload'First));
 
 end Skit;

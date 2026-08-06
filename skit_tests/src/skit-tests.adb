@@ -1,13 +1,58 @@
 with Ada.Command_Line;
 with Ada.Containers.Doubly_Linked_Lists;
+with Ada.Directories;
+with Ada.Streams;
+with Ada.Streams.Stream_IO;
 with Ada.Wide_Wide_Text_IO;
 with Ada.Text_IO;
+with Interfaces;
+
+with Ada.Strings.Unbounded;
 
 with Skit.Compiler;
 with Skit.Handles;
+with Skit.Handles.Images;
 with Skit.Parser;
 
 package body Skit.Tests is
+
+   --  A concrete foreign object for the GC test.  It carries N Object children
+   --  (relocated on collection via Visit) and records, in the Freed observer
+   --  below, that Free ran -- so the test can tell survivors from swept
+   --  objects without dereferencing a reclaimed one.
+
+   Freed : array (1 .. 8) of Boolean := [others => False];
+
+   --  Observers for the image round-trip: what the class factory last rebuilt.
+   Last_Des_Id          : Natural := 0;
+   Last_Des_Child_Count : Natural := 0;
+   Last_Des_Child       : Object  := Undefined;
+
+   type Box (N : Natural) is new Foreign_Object_Interface with
+      record
+         Id       : Positive;
+         Children : Object_Array (1 .. N);
+      end record;
+
+   overriding function Class_Name (This : Box) return String;
+
+   overriding function Serialize (This : Box)
+      return Ada.Streams.Stream_Element_Array;
+
+   overriding procedure Visit
+     (This    : in out Box;
+      Process : not null access procedure (Child : in out Object));
+
+   overriding procedure Free (This : in out Box);
+
+   overriding function Image (This : Box) return String;
+
+   --  A class factory: rebuild a Box from its serialized Id and its (already
+   --  relocated) children, recording what it saw in the observers above.
+   function Box_Deserialize
+     (Bytes    : Ada.Streams.Stream_Element_Array;
+      Children : Object_Array)
+      return Foreign_Reference;
 
    Handle : Skit.Handles.Handle;
 
@@ -526,6 +571,958 @@ package body Skit.Tests is
       end;
 
    end Test;
+
+   ----------------
+   -- Class_Name --
+   ----------------
+
+   overriding function Class_Name (This : Box) return String is
+      pragma Unreferenced (This);
+   begin
+      return "box";
+   end Class_Name;
+
+   ---------------
+   -- Serialize --
+   ---------------
+
+   overriding function Serialize (This : Box)
+      return Ada.Streams.Stream_Element_Array
+   is
+      use Ada.Streams;
+      use Interfaces;
+      R : Stream_Element_Array (1 .. 4);
+      V : Unsigned_32 := Unsigned_32 (This.Id);
+   begin
+      for I in R'Range loop
+         R (I) := Stream_Element (V and 16#FF#);
+         V := Shift_Right (V, 8);
+      end loop;
+      return R;
+   end Serialize;
+
+   ---------------------
+   -- Box_Deserialize --
+   ---------------------
+
+   function Box_Deserialize
+     (Bytes    : Ada.Streams.Stream_Element_Array;
+      Children : Object_Array)
+      return Foreign_Reference
+   is
+      use Interfaces;
+      V : Unsigned_32 := 0;
+   begin
+      for I in reverse Bytes'Range loop
+         V := Shift_Left (V, 8) or Unsigned_32 (Bytes (I));
+      end loop;
+      Last_Des_Id          := Natural (V);
+      Last_Des_Child_Count := Children'Length;
+      if Children'Length >= 1 then
+         Last_Des_Child := Children (Children'First);
+      end if;
+      return new Box'(N        => Children'Length,
+                      Id       => Positive (V),
+                      Children => Children);
+   end Box_Deserialize;
+
+   -----------
+   -- Visit --
+   -----------
+
+   overriding procedure Visit
+     (This    : in out Box;
+      Process : not null access procedure (Child : in out Object))
+   is
+   begin
+      for I in This.Children'Range loop
+         Process (This.Children (I));
+      end loop;
+   end Visit;
+
+   ----------
+   -- Free --
+   ----------
+
+   overriding procedure Free (This : in out Box) is
+   begin
+      Freed (This.Id) := True;
+   end Free;
+
+   -----------
+   -- Image --
+   -----------
+
+   overriding function Image (This : Box) return String is
+      pragma Unreferenced (This);
+   begin
+      return "<box>";
+   end Image;
+
+   ---------------------------
+   -- Test_Foreign_Objects --
+   ---------------------------
+
+   procedure Test_Foreign_Objects is
+
+      H : constant Skit.Handles.Handle :=
+            Skit.Handles.New_Handle (Core_Size => 1024);
+
+      function No_Resolve (Name : String) return Object;
+
+      procedure Check (Name : String; Cond : Boolean);
+
+      ----------------
+      -- No_Resolve --
+      ----------------
+
+      function No_Resolve (Name : String) return Object is
+         pragma Unreferenced (Name);
+      begin
+         return Undefined;
+      end No_Resolve;
+
+      -----------
+      -- Check --
+      -----------
+
+      procedure Check (Name : String; Cond : Boolean) is
+      begin
+         Total := @ + 1;
+         Put (Name, 38);
+         Ada.Text_IO.Set_Col (40);
+         if Cond then
+            Pass := @ + 1;
+            Ada.Text_IO.Put_Line ("PASS");
+         else
+            Fail := @ + 1;
+            Ada.Text_IO.Put_Line ("FAIL");
+         end if;
+      end Check;
+
+      function Cell (Left, Right : Skit.Terms.Term) return Object;
+
+      ----------
+      -- Cell --
+      ----------
+
+      function Cell (Left, Right : Skit.Terms.Term) return Object is
+      begin
+         return H.Install
+           (Skit.Compiler.Compile (Skit.Terms.Apply (Left, Right)),
+            No_Resolve'Access);
+      end Cell;
+
+      --  Child of box 1: an App (42, 43) cell reachable only through the box,
+      --  so it survives a collection only if Visit forwards it.
+      Cc   : constant Object :=
+               Cell (Skit.Terms.Const (42), Skit.Terms.Const (43));
+
+      B1 : constant Foreign_Reference :=
+             new Box'(N => 1, Id => 1, Children => [Cc]);
+      B2 : constant Foreign_Reference :=
+             new Box'(N => 0, Id => 2, Children => []);
+      B3 : constant Foreign_Reference :=
+             new Box'(N => 0, Id => 3, Children => []);
+
+      Obj1 : constant Object := H.Bind_Object (B1);
+      Obj2 : constant Object := H.Bind_Object (B2);
+      Obj3 : constant Object := H.Bind_Object (B3);
+   begin
+      --  Keep box 1 alive through a live cell (found by live-cell discovery)
+      --  and box 3 through a bare environment root (found by root marking).
+      --  Box 2 is left unreferenced; it must be swept.
+      H.Bind
+        ("keep1",
+         Cell (Skit.Terms.Primitive (Obj1), Skit.Terms.Const (0)));
+      H.Bind ("keep3", Obj3);
+
+      H.Unpin (Obj1);
+      H.Unpin (Obj2);
+      H.Unpin (Obj3);
+
+      --  Seed the stack, then churn allocations to force several collections.
+      H.Install (Skit.Compiler.Compile (Skit.Terms.Const (0)),
+                 No_Resolve'Access);
+      for I in 1 .. 4000 loop
+         H.Push (To_Object (I));
+         declare
+            Discard : constant Object := H.Pop;
+            pragma Unreferenced (Discard);
+         begin
+            null;
+         end;
+      end loop;
+
+      Check ("foreign: unreachable box swept", Freed (2));
+      Check ("foreign: box kept via live cell", not Freed (1));
+      Check ("foreign: box kept via bare root", not Freed (3));
+
+      declare
+         Child : constant Object := Box (B1.all).Children (1);
+      begin
+         Check
+           ("foreign: child forwarded",
+            Is_Application (Child)
+            and then H.Left (Child) = To_Object (42)
+            and then H.Right (Child) = To_Object (43));
+      end;
+
+      declare
+         B4   : constant Foreign_Reference :=
+                  new Box'(N => 0, Id => 4, Children => []);
+         Obj4 : constant Object := H.Bind_Object (B4);
+      begin
+         Check ("foreign: swept slot reused", Obj4 = Obj2);
+      end;
+
+      H.Free_Foreign_Objects;
+      Check ("foreign: shutdown frees survivors",
+             Freed (1) and then Freed (3) and then Freed (4));
+   end Test_Foreign_Objects;
+
+   -------------------------
+   -- Test_Foreign_Nested --
+   -------------------------
+
+   procedure Test_Foreign_Nested is
+
+      function No_Resolve (Name : String) return Object;
+
+      procedure Check (Name : String; Cond : Boolean);
+
+      procedure Churn (H : Skit.Handles.Handle);
+
+      H : constant Skit.Handles.Handle :=
+            Skit.Handles.New_Handle (Core_Size => 1024);
+
+      ----------------
+      -- No_Resolve --
+      ----------------
+
+      function No_Resolve (Name : String) return Object is
+         pragma Unreferenced (Name);
+      begin
+         return Undefined;
+      end No_Resolve;
+
+      -----------
+      -- Check --
+      -----------
+
+      procedure Check (Name : String; Cond : Boolean) is
+      begin
+         Total := @ + 1;
+         Put (Name, 38);
+         Ada.Text_IO.Set_Col (40);
+         if Cond then
+            Pass := @ + 1;
+            Ada.Text_IO.Put_Line ("PASS");
+         else
+            Fail := @ + 1;
+            Ada.Text_IO.Put_Line ("FAIL");
+         end if;
+      end Check;
+
+      -----------
+      -- Churn --
+      -----------
+
+      --  Allocate and discard until several collections have run.
+      procedure Churn (H : Skit.Handles.Handle) is
+      begin
+         H.Install
+           (Skit.Compiler.Compile (Skit.Terms.Const (0)), No_Resolve'Access);
+         for I in 1 .. 4000 loop
+            H.Push (To_Object (I));
+            declare
+               Discard : constant Object := H.Pop;
+               pragma Unreferenced (Discard);
+            begin
+               null;
+            end;
+         end loop;
+      end Churn;
+
+      --  Inner box, reachable only through the outer box's child cell.
+      Inner    : constant Foreign_Reference :=
+                   new Box'(N => 0, Id => 5, Children => []);
+      Obj_Inner : constant Object := H.Bind_Object (Inner);
+
+      --  A cell App (Obj_Inner, 0) held as the outer box's child.
+      Child : constant Object :=
+                H.Install
+                  (Skit.Compiler.Compile
+                     (Skit.Terms.Apply
+                        (Skit.Terms.Primitive (Obj_Inner),
+                         Skit.Terms.Const (0))),
+                   No_Resolve'Access);
+
+      Outer     : constant Foreign_Reference :=
+                    new Box'(N => 1, Id => 6, Children => [Child]);
+      Obj_Outer : constant Object := H.Bind_Object (Outer);
+   begin
+      --  Keep the outer box via a bare root; the inner box is reachable only
+      --  through the outer box's child cell, so only the discovery fixpoint
+      --  (a later round, after the child is forwarded) can find it.
+      H.Bind ("outer", Obj_Outer);
+      H.Unpin (Obj_Outer);
+      H.Unpin (Obj_Inner);
+
+      Churn (H);
+      Check ("foreign nested: outer survives", not Freed (6));
+      Check ("foreign nested: inner survives via nesting", not Freed (5));
+
+      --  Drop the outer box; both must now be collected.
+      H.Bind ("outer", To_Object (0));
+      Churn (H);
+      Check ("foreign nested: outer collected when dropped", Freed (6));
+      Check ("foreign nested: inner collected transitively", Freed (5));
+   end Test_Foreign_Nested;
+
+   -----------------
+   -- Test_Images --
+   -----------------
+
+   procedure Test_Images is
+      use Ada.Strings.Unbounded;
+      package Img renames Skit.Handles.Images;
+      package T renames Skit.Terms;
+
+      Path : constant String := "test_image.skix";
+
+      function No_Resolve (Name : String) return Object;
+
+      procedure Check (Name : String; Cond : Boolean);
+
+      function New_Machine return Skit.Handles.Handle
+      is (Skit.Handles.New_Handle (Core_Size => 1024));
+
+      function U (S : String) return Unbounded_String
+        renames To_Unbounded_String;
+
+      ----------------
+      -- No_Resolve --
+      ----------------
+
+      function No_Resolve (Name : String) return Object is
+         pragma Unreferenced (Name);
+      begin
+         return Undefined;
+      end No_Resolve;
+
+      -----------
+      -- Check --
+      -----------
+
+      procedure Check (Name : String; Cond : Boolean) is
+      begin
+         Total := @ + 1;
+         Put (Name, 38);
+         Ada.Text_IO.Set_Col (40);
+         if Cond then
+            Pass := @ + 1;
+            Ada.Text_IO.Put_Line ("PASS");
+         else
+            Fail := @ + 1;
+            Ada.Text_IO.Put_Line ("FAIL");
+         end if;
+      end Check;
+
+   begin
+      --  Structure: K 42 99 == App (App (K, 42), 99).  Two nested cells, an
+      --  integer at each level and a combinator at the bottom.
+      declare
+         Hw   : constant Skit.Handles.Handle := New_Machine;
+         Hr   : constant Skit.Handles.Handle := New_Machine;
+         Root : constant Object :=
+                  Hw.Install
+                    (Skit.Compiler.Compile
+                       (T.Apply
+                          (T.Apply (T.Combinator (Skit.K), T.Const (42)),
+                           T.Const (99))),
+                     No_Resolve'Access);
+      begin
+         Hw.Bind ("root", Root);
+         Img.Write (Hw, Path, [1 => U ("root")]);
+         Img.Read (Hr, Path);
+         declare
+            RB    : constant Object := Hr.Lookup ("root");
+            Inner : constant Object :=
+                      (if Is_Application (RB) then Hr.Left (RB)
+                       else Undefined);
+         begin
+            Check ("image: export is an application", Is_Application (RB));
+            Check ("image: outer right leaf preserved",
+                   Is_Application (RB)
+                   and then Hr.Right (RB) = To_Object (99));
+            Check ("image: inner node is an application",
+                   Is_Application (Inner));
+            Check ("image: combinator preserved",
+                   Is_Application (Inner) and then Hr.Left (Inner) = Skit.K);
+            Check ("image: inner int leaf preserved",
+                   Is_Application (Inner)
+                   and then Hr.Right (Inner) = To_Object (42));
+         end;
+      end;
+
+      --  Semantic round-trip: S K K 42 reduces to 42 after a reload into a
+      --  fresh machine.
+      declare
+         Hw : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+
+         function From_Reader (Name : String) return Object
+         is (Hr.Lookup (Name));
+
+         Root : constant Object :=
+                  Hw.Install
+                    (Skit.Compiler.Compile
+                       (T.Apply
+                          (T.Apply
+                             (T.Apply (T.Combinator (Skit.S),
+                                       T.Combinator (Skit.K)),
+                              T.Combinator (Skit.K)),
+                           T.Const (42))),
+                     No_Resolve'Access);
+      begin
+         Hw.Bind ("f", Root);
+         Img.Write (Hw, Path, [1 => U ("f")]);
+         Img.Read (Hr, Path);
+         Hr.Install
+           (Skit.Compiler.Compile (T.Symbol ("f")), From_Reader'Access);
+         Hr.Evaluate;
+         Check ("image: evaluates to same value after round-trip",
+                Hr.Pop = To_Object (42));
+      end;
+
+      --  Cyclic graph: Y K evaluates to a single self-referential cell
+      --  App (K, self); the writer must break the cycle and the reader must
+      --  re-tie the self reference.
+      declare
+         Hw : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+      begin
+         Hw.Install
+           (Skit.Compiler.Compile
+              (T.Apply (T.Combinator (Skit.Y), T.Combinator (Skit.K))),
+            No_Resolve'Access);
+         Hw.Evaluate;
+         Hw.Bind ("cyc", Hw.Pop);
+         Img.Write (Hw, Path, [1 => U ("cyc")]);
+         Img.Read (Hr, Path);
+         declare
+            --  Y K evaluates to  W = App (K, X),  X = App (K, X):  X is a
+            --  self-referential cell (Right (X) = X).  The writer must break
+            --  that self-loop and the reader must re-tie it, so following
+            --  Right into X and again stays at X.
+            CB : constant Object := Hr.Lookup ("cyc");
+            X  : constant Object :=
+                   (if Is_Application (CB) then Hr.Right (CB) else Undefined);
+         begin
+            Check ("image: self-referential cell preserved",
+                   Is_Application (CB)
+                   and then Hr.Left (CB) = Skit.K
+                   and then Is_Application (X)
+                   and then Hr.Left (X) = Skit.K
+                   and then Hr.Right (X) = X);
+         end;
+      end;
+
+      --  Several exports, including bare (non-application) immediates.
+      declare
+         Hw : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+      begin
+         Hw.Bind ("n", To_Object (7));
+         Hw.Bind ("c", Skit.K);
+         Img.Write (Hw, Path, [U ("n"), U ("c")]);
+         Img.Read (Hr, Path);
+         Check ("image: bare integer export", Hr.Lookup ("n") = To_Object (7));
+         Check ("image: bare combinator export", Hr.Lookup ("c") = Skit.K);
+      end;
+
+      --  Negative integer and float leaves.
+      declare
+         Hw   : constant Skit.Handles.Handle := New_Machine;
+         Hr   : constant Skit.Handles.Handle := New_Machine;
+         Root : constant Object :=
+                  Hw.Install
+                    (Skit.Compiler.Compile
+                       (T.Apply
+                          (T.Apply (T.Combinator (Skit.K), T.Const (-5)),
+                           T.Const (Long_Float'(0.5)))),
+                     No_Resolve'Access);
+      begin
+         Hw.Bind ("g", Root);
+         Img.Write (Hw, Path, [1 => U ("g")]);
+         Img.Read (Hr, Path);
+         declare
+            GB : constant Object := Hr.Lookup ("g");
+         begin
+            Check ("image: negative int leaf",
+                   Is_Application (GB)
+                   and then Is_Application (Hr.Left (GB))
+                   and then Hr.Right (Hr.Left (GB)) = To_Object (-5));
+            Check ("image: float leaf",
+                   Is_Application (GB)
+                   and then Hr.Right (GB) = To_Object (Long_Float'(0.5)));
+         end;
+      end;
+
+      --  Errors: an unknown export, and an object the MVP cannot serialize.
+      declare
+         Hw     : constant Skit.Handles.Handle := New_Machine;
+         Caught : Boolean := False;
+      begin
+         begin
+            Img.Write (Hw, Path, [1 => U ("does-not-exist")]);
+         exception
+            when Img.Image_Error => Caught := True;
+         end;
+         Check ("image: unknown export rejected", Caught);
+      end;
+
+      declare
+         Hw     : constant Skit.Handles.Handle := New_Machine;
+         Caught : Boolean := False;
+      begin
+         Hw.Bind ("p", Hw.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+         begin
+            Img.Write (Hw, Path, [1 => U ("p")]);
+         exception
+            when Img.Image_Error => Caught := True;
+         end;
+         Check ("image: bare primitive export rejected", Caught);
+      end;
+
+      --  Named imports: a graph referencing the primitive #add serializes with
+      --  the primitive as a by-name import, and re-links to a *different*
+      --  machine's #add on load (the build-specific opcode never crosses).
+      declare
+         Hw   : constant Skit.Handles.Handle := New_Machine;
+         Hr   : constant Skit.Handles.Handle := New_Machine;
+         Hbad : constant Skit.Handles.Handle := New_Machine;
+
+         function From_Writer (Name : String) return Object
+         is (Hw.Lookup (Name));
+         function From_Reader (Name : String) return Object
+         is (Hr.Lookup (Name));
+
+         Caught : Boolean := False;
+      begin
+         Hw.Bind ("#add", Hw.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+         Hw.Bind
+           ("sum",
+            Hw.Install
+              (Skit.Compiler.Compile
+                 (T.Apply
+                    (T.Apply (T.Symbol ("#add"), T.Const (2)),
+                     T.Const (3))),
+               From_Writer'Access));
+         Img.Write (Hw, Path, [1 => U ("sum")]);
+
+         --  Reader that provides its own #add: the import must resolve to it.
+         Hr.Bind ("#add", Hr.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+         Img.Read (Hr, Path);
+         Hr.Install
+           (Skit.Compiler.Compile (T.Symbol ("sum")), From_Reader'Access);
+         Hr.Evaluate;
+         Check ("image: named import re-links and evaluates",
+                Hr.Pop = To_Object (5));
+
+         --  Reader lacking #add: the import cannot resolve.
+         begin
+            Img.Read (Hbad, Path);
+         exception
+            when Img.Image_Error => Caught := True;
+         end;
+         Check ("image: unresolved import rejected", Caught);
+      end;
+
+      --  Symbol atoms: a graph carrying an (unresolved) symbol re-interns the
+      --  symbol by name into the reader -- its object is the reader's own
+      --  symbol for that name, not the writer's.
+      declare
+         Hw : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+
+         --  Resolve leaves references as symbols rather than values.
+         function As_Symbol (Name : String) return Object
+         is (Hw.Intern_Symbol (Name));
+
+         Root : constant Object :=
+                  Hw.Install
+                    (Skit.Compiler.Compile
+                       (T.Apply (T.Symbol ("foo"), T.Const (1))),
+                     As_Symbol'Access);
+      begin
+         Hw.Bind ("g", Root);
+         Img.Write (Hw, Path, [1 => U ("g")]);
+         Img.Read (Hr, Path);
+         declare
+            GB : constant Object := Hr.Lookup ("g");
+         begin
+            Check ("image: symbol re-interned by name",
+                   Is_Application (GB)
+                   and then Is_Symbol (Hr.Left (GB))
+                   and then Hr.Left (GB) = Hr.Intern_Symbol ("foo")
+                   and then Hr.Right (GB) = To_Object (1));
+         end;
+      end;
+
+      --  Foreign objects: a Box (carrying an Id and a child cell) serializes
+      --  via its class + bytes + child vector, and is rebuilt on load by the
+      --  factory registered for its class.
+      declare
+         Hw   : constant Skit.Handles.Handle := New_Machine;
+         Hr   : constant Skit.Handles.Handle := New_Machine;
+         Hbad : constant Skit.Handles.Handle := New_Machine;
+
+         Child : constant Object :=
+                   Hw.Install
+                     (Skit.Compiler.Compile
+                        (T.Apply (T.Combinator (Skit.K), T.Const (5))),
+                      No_Resolve'Access);
+         Bw    : constant Foreign_Reference :=
+                   new Box'(N => 1, Id => 77, Children => [Child]);
+         Obj_B : constant Object := Hw.Bind_Object (Bw);
+
+         Caught : Boolean := False;
+      begin
+         Hw.Bind ("b", Obj_B);
+         Img.Write (Hw, Path, [1 => U ("b")]);
+
+         Hr.Register_Object_Class ("box", Box_Deserialize'Access);
+         Last_Des_Id          := 0;
+         Last_Des_Child_Count := 0;
+         Last_Des_Child       := Undefined;
+         Img.Read (Hr, Path);
+
+         Check ("image: foreign object rebuilt",
+                Is_Foreign_Object (Hr.Lookup ("b")));
+         Check ("image: foreign bytes round-trip", Last_Des_Id = 77);
+         Check ("image: foreign child count", Last_Des_Child_Count = 1);
+         Check ("image: foreign child relocated",
+                Is_Application (Last_Des_Child)
+                and then Hr.Left (Last_Des_Child) = Skit.K
+                and then Hr.Right (Last_Des_Child) = To_Object (5));
+
+         --  Reader without the class factory: cannot rebuild.
+         begin
+            Img.Read (Hbad, Path);
+         exception
+            when Img.Image_Error => Caught := True;
+         end;
+         Check ("image: unregistered foreign class rejected", Caught);
+      end;
+
+      --  Annotations: opaque per-export bytes (e.g. Leander's inferred type)
+      --  round-trip verbatim, keyed by export name; an export with none is
+      --  simply absent from the section -- the handler is never called for
+      --  it.
+      declare
+         use type Ada.Streams.Stream_Element;
+         use type Ada.Streams.Stream_Element_Offset;
+
+         Hw : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+
+         N_Annotation : constant Ada.Streams.Stream_Element_Array (1 .. 3) :=
+                          [16#01#, 16#02#, 16#03#];
+         No_Annotation : constant Ada.Streams.Stream_Element_Array (1 .. 0) :=
+                            [];
+
+         function Annotation_For (Name : String)
+           return Ada.Streams.Stream_Element_Array
+         is (if Name = "n" then N_Annotation else No_Annotation);
+
+         Seen_N      : Boolean := False;
+         Seen_M      : Boolean := False;
+         N_Bytes_Len : Natural := 0;
+         N_Byte_1    : Ada.Streams.Stream_Element := 0;
+         N_Byte_2    : Ada.Streams.Stream_Element := 0;
+         N_Byte_3    : Ada.Streams.Stream_Element := 0;
+
+         procedure On_Annotation
+           (Export_Name : String;
+            Bytes       : Ada.Streams.Stream_Element_Array);
+
+         -------------------
+         -- On_Annotation --
+         -------------------
+
+         procedure On_Annotation
+           (Export_Name : String;
+            Bytes       : Ada.Streams.Stream_Element_Array)
+         is
+         begin
+            if Export_Name = "n" then
+               Seen_N := True;
+               N_Bytes_Len := Bytes'Length;
+               if Bytes'Length = 3 then
+                  N_Byte_1 := Bytes (Bytes'First);
+                  N_Byte_2 := Bytes (Bytes'First + 1);
+                  N_Byte_3 := Bytes (Bytes'First + 2);
+               end if;
+            elsif Export_Name = "m" then
+               Seen_M := True;
+            end if;
+         end On_Annotation;
+
+      begin
+         Hw.Bind ("n", To_Object (7));
+         Hw.Bind ("m", To_Object (8));
+         Img.Write
+           (Hw, Path, [U ("n"), U ("m")],
+            Annotation_Of => Annotation_For'Access);
+         Img.Read (Hr, Path, Annotation => On_Annotation'Access);
+         Check ("image: annotation delivered for annotated export", Seen_N);
+         Check ("image: annotation bytes round-trip",
+                N_Bytes_Len = 3
+                and then N_Byte_1 = 16#01#
+                and then N_Byte_2 = 16#02#
+                and then N_Byte_3 = 16#03#);
+         Check ("image: no annotation call for un-annotated export",
+                not Seen_M);
+
+         --  Reading without a handler at all must not raise or otherwise
+         --  choke on a present Annotations section.
+         declare
+            Hr2 : constant Skit.Handles.Handle := New_Machine;
+         begin
+            Img.Read (Hr2, Path);
+            Check ("image: annotation section ignorable without a handler",
+                   Hr2.Lookup ("n") = To_Object (7));
+         end;
+      end;
+
+      --  Checksum: a single flipped byte in the body is detected on load.
+      declare
+         Hw     : constant Skit.Handles.Handle := New_Machine;
+         Hr     : constant Skit.Handles.Handle := New_Machine;
+         Caught : Boolean := False;
+      begin
+         Hw.Bind ("n", To_Object (7));
+         Img.Write (Hw, Path, [1 => U ("n")]);
+         declare
+            use type Ada.Streams.Stream_Element;
+            use type Ada.Streams.Stream_Element_Offset;
+            package SIO renames Ada.Streams.Stream_IO;
+            F : SIO.File_Type;
+         begin
+            SIO.Open (F, SIO.In_File, Path);
+            declare
+               Len  : constant SIO.Count := SIO.Size (F);
+               D    : Ada.Streams.Stream_Element_Array
+                        (1 .. Ada.Streams.Stream_Element_Offset (Len));
+               Last : Ada.Streams.Stream_Element_Offset;
+               Mid  : constant Ada.Streams.Stream_Element_Offset :=
+                        1 + D'Length / 2;
+            begin
+               SIO.Read (F, D, Last);
+               SIO.Close (F);
+               D (Mid) := D (Mid) xor 16#FF#;
+               SIO.Create (F, SIO.Out_File, Path);
+               SIO.Write (F, D);
+               SIO.Close (F);
+            end;
+         end;
+         begin
+            Img.Read (Hr, Path);
+         exception
+            when Img.Image_Error => Caught := True;
+         end;
+         Check ("image: corrupted image rejected by checksum", Caught);
+      end;
+
+      --  Fingerprint: over export names.  Same names -> same fingerprint even
+      --  with different contents; different names -> different fingerprint.
+      declare
+         use type Interfaces.Unsigned_32;
+
+         H1 : constant Skit.Handles.Handle := New_Machine;
+         H2 : constant Skit.Handles.Handle := New_Machine;
+         H3 : constant Skit.Handles.Handle := New_Machine;
+         Fp_AB, Fp_AB2, Fp_AC : Interfaces.Unsigned_32;
+      begin
+         H1.Bind ("a", To_Object (1));
+         H1.Bind ("b", To_Object (2));
+         Img.Write (H1, Path, [U ("a"), U ("b")]);
+         Fp_AB := Img.Fingerprint (Path);
+
+         H2.Bind ("a", To_Object (99));   --  same names, different values
+         H2.Bind ("b", To_Object (100));
+         Img.Write (H2, Path, [U ("a"), U ("b")]);
+         Fp_AB2 := Img.Fingerprint (Path);
+
+         H3.Bind ("a", To_Object (1));
+         H3.Bind ("c", To_Object (2));    --  different export name
+         Img.Write (H3, Path, [U ("a"), U ("c")]);
+         Fp_AC := Img.Fingerprint (Path);
+
+         Check ("image: fingerprint stable across contents", Fp_AB = Fp_AB2);
+         Check ("image: fingerprint changes with exports", Fp_AB /= Fp_AC);
+      end;
+
+      --  Fingerprint: also covers annotation bytes -- same names and values
+      --  but different annotation bytes must still change the fingerprint
+      --  (ADR 0002's resolved "Interface fingerprint contents" question).
+      declare
+         use type Interfaces.Unsigned_32;
+
+         H1 : constant Skit.Handles.Handle := New_Machine;
+         H2 : constant Skit.Handles.Handle := New_Machine;
+         H3 : constant Skit.Handles.Handle := New_Machine;
+
+         Bytes_1 : constant Ada.Streams.Stream_Element_Array (1 .. 1) :=
+                     [16#01#];
+         Bytes_2 : constant Ada.Streams.Stream_Element_Array (1 .. 1) :=
+                     [16#02#];
+
+         function Ann_1 (Name : String)
+           return Ada.Streams.Stream_Element_Array
+         is (if Name = "a" then Bytes_1
+             else raise Program_Error);
+
+         function Ann_2 (Name : String)
+           return Ada.Streams.Stream_Element_Array
+         is (if Name = "a" then Bytes_2
+             else raise Program_Error);
+
+         Fp_None, Fp_1, Fp_2 : Interfaces.Unsigned_32;
+      begin
+         H1.Bind ("a", To_Object (1));
+         H2.Bind ("a", To_Object (1));
+         H3.Bind ("a", To_Object (1));
+
+         Img.Write (H1, Path, [1 => U ("a")]);
+         Fp_None := Img.Fingerprint (Path);
+
+         Img.Write (H2, Path, [1 => U ("a")], Annotation_Of => Ann_1'Access);
+         Fp_1 := Img.Fingerprint (Path);
+
+         Img.Write (H3, Path, [1 => U ("a")], Annotation_Of => Ann_2'Access);
+         Fp_2 := Img.Fingerprint (Path);
+
+         Check ("image: fingerprint changes when an annotation is added",
+                Fp_None /= Fp_1);
+         Check ("image: fingerprint changes when annotation bytes differ",
+                Fp_1 /= Fp_2);
+      end;
+
+      --  Sibling resolution: an import prefers a co-loaded module's export
+      --  over the standing environment.
+      declare
+         Ha : constant Skit.Handles.Handle := New_Machine;
+         Hb : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+         Path_A : constant String := "test_a.skix";
+         Path_B : constant String := "test_b.skix";
+
+         function From_A (Name : String) return Object is (Ha.Lookup (Name));
+      begin
+         --  Module A imports "shared"; module B exports "shared" as K 42.
+         Ha.Bind ("shared", Ha.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+         Ha.Bind
+           ("use",
+            Ha.Install
+              (Skit.Compiler.Compile
+                 (T.Apply (T.Symbol ("shared"), T.Const (7))),
+               From_A'Access));
+         Img.Write (Ha, Path_A, [1 => U ("use")]);
+
+         Hb.Bind
+           ("shared",
+            Hb.Install
+              (Skit.Compiler.Compile
+                 (T.Apply (T.Combinator (Skit.K), T.Const (42))),
+               From_A'Access));
+         Img.Write (Hb, Path_B, [1 => U ("shared")]);
+
+         --  The environment already binds "shared" -- the sibling must win.
+         Hr.Bind ("shared", To_Object (999));
+         Img.Read (Hr, Img.Name_Array'[U (Path_A), U (Path_B)]);
+
+         declare
+            Use_G  : constant Object := Hr.Lookup ("use");
+            Shared : constant Object := Hr.Lookup ("shared");
+         begin
+            Check ("sibling: import bound to sibling export",
+                   Is_Application (Use_G)
+                   and then Hr.Left (Use_G) = Shared);
+            Check ("sibling: sibling export wins over environment",
+                   Is_Application (Shared)
+                   and then Hr.Left (Shared) = Skit.K
+                   and then Hr.Right (Shared) = To_Object (42));
+         end;
+
+         if Ada.Directories.Exists (Path_A) then
+            Ada.Directories.Delete_File (Path_A);
+         end if;
+         if Ada.Directories.Exists (Path_B) then
+            Ada.Directories.Delete_File (Path_B);
+         end if;
+      end;
+
+      --  Mutual references: A imports B, B imports A.  Only the two-pass load
+      --  can link them -- every export is registered before any import.
+      declare
+         Ha : constant Skit.Handles.Handle := New_Machine;
+         Hb : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+         Path_A : constant String := "test_a.skix";
+         Path_B : constant String := "test_b.skix";
+
+         function From_A (Name : String) return Object is (Ha.Lookup (Name));
+         function From_B (Name : String) return Object is (Hb.Lookup (Name));
+      begin
+         Ha.Bind ("b", Ha.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+         Ha.Bind
+           ("a",
+            Ha.Install
+              (Skit.Compiler.Compile
+                 (T.Apply (T.Symbol ("b"), T.Const (1))),
+               From_A'Access));
+         Img.Write (Ha, Path_A, [1 => U ("a")]);
+
+         Hb.Bind ("a", Hb.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+         Hb.Bind
+           ("b",
+            Hb.Install
+              (Skit.Compiler.Compile
+                 (T.Apply (T.Symbol ("a"), T.Const (2))),
+               From_B'Access));
+         Img.Write (Hb, Path_B, [1 => U ("b")]);
+
+         Img.Read (Hr, Img.Name_Array'[U (Path_A), U (Path_B)]);
+
+         declare
+            Ga : constant Object := Hr.Lookup ("a");
+            Gb : constant Object := Hr.Lookup ("b");
+         begin
+            Check ("sibling: mutual import a -> b",
+                   Is_Application (Ga)
+                   and then Hr.Left (Ga) = Gb
+                   and then Hr.Right (Ga) = To_Object (1));
+            Check ("sibling: mutual import b -> a",
+                   Is_Application (Gb)
+                   and then Hr.Left (Gb) = Ga
+                   and then Hr.Right (Gb) = To_Object (2));
+         end;
+
+         if Ada.Directories.Exists (Path_A) then
+            Ada.Directories.Delete_File (Path_A);
+         end if;
+         if Ada.Directories.Exists (Path_B) then
+            Ada.Directories.Delete_File (Path_B);
+         end if;
+      end;
+
+      if Ada.Directories.Exists (Path) then
+         Ada.Directories.Delete_File (Path);
+      end if;
+   end Test_Images;
 
    ---------
    -- Var --

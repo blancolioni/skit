@@ -57,6 +57,19 @@ private package Skit.Memory is
 
    procedure GC (This : in out Instance);
 
+   function Live_Cell_Count (This : Instance) return Natural;
+   --  Number of live cells after a collection (the compacted to-space).
+
+   procedure Live_Cell
+     (This  : Instance;
+      Index : Natural;
+      Left  : out Object;
+      Right : out Object)
+     with Pre => Index < Live_Cell_Count (This);
+   --  Read the Index'th live cell.  Lets a higher layer walk the live set --
+   --  e.g. to discover the foreign objects reachable from it -- without this
+   --  access-free core knowing anything about foreign objects or addresses.
+
 private
 
    type Cell_Type is

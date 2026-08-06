@@ -1,5 +1,6 @@
 with Ada.Calendar;
 with Ada.Text_IO;
+with Ada.Unchecked_Deallocation;
 with Skit.Debug;
 
 package body Skit.Machines is
@@ -36,6 +37,21 @@ package body Skit.Machines is
    procedure GC
      (This : in out Instance'Class;
       Xs   : in out Object_Array);
+
+   function Mark_Foreign_Object
+     (This : in out Instance'Class;
+      O    : Object)
+      return Boolean;
+   procedure Mark_Pinned_Foreign (This : in out Instance'Class);
+   procedure Mark_Foreign_Roots
+     (This : in out Instance'Class;
+      Xs   : Object_Array);
+   function Discover_Foreign (This : in out Instance'Class) return Boolean;
+   procedure Sweep_Foreign (This : in out Instance'Class);
+
+   procedure Free_Reference is
+     new Ada.Unchecked_Deallocation
+       (Foreign_Object_Interface'Class, Foreign_Reference);
 
    ------------
    -- Append --
@@ -659,10 +675,16 @@ package body Skit.Machines is
             for X of Xs loop
                Mark (This.Core, X);
             end loop;
+            This.Mark_Pinned_Foreign;
+            This.Mark_Foreign_Roots (Xs);
 
-            GC (This.Core);
+            loop
+               GC (This.Core);
+               exit when not This.Discover_Foreign;
+            end loop;
 
             After_GC (This.Core);
+            This.Sweep_Foreign;
             This.GC_Time := @ + (Clock - Start);
          end;
       else
@@ -679,10 +701,16 @@ package body Skit.Machines is
          for X of Xs loop
             Mark (This.Core, X);
          end loop;
+         This.Mark_Pinned_Foreign;
+         This.Mark_Foreign_Roots (Xs);
 
-         GC (This.Core);
+         loop
+            GC (This.Core);
+            exit when not This.Discover_Foreign;
+         end loop;
 
          After_GC (This.Core);
+         This.Sweep_Foreign;
       end if;
 
       This.GC_Count := @ + 1;
@@ -747,6 +775,32 @@ package body Skit.Machines is
       end return;
    end Pop;
 
+   --------------
+   -- Set_Left --
+   --------------
+
+   procedure Set_Left
+     (This : in out Instance'Class;
+      App  : Object;
+      To   : Object)
+   is
+   begin
+      Skit.Memory.Set_Left (This.Core, App, To);
+   end Set_Left;
+
+   ---------------
+   -- Set_Right --
+   ---------------
+
+   procedure Set_Right
+     (This : in out Instance'Class;
+      App  : Object;
+      To   : Object)
+   is
+   begin
+      Skit.Memory.Set_Right (This.Core, App, To);
+   end Set_Right;
+
    -----------------
    -- Stack_Empty --
    -----------------
@@ -796,5 +850,277 @@ package body Skit.Machines is
    begin
       S := This.Apply (Value, S);
    end Push;
+
+   ---------------------------
+   -- Register_Object_Class --
+   ---------------------------
+
+   procedure Register_Object_Class
+     (This        : in out Instance'Class;
+      Name        : String;
+      Deserialize : Deserializer)
+   is
+   begin
+      This.Classes.Include (Name, Deserialize);
+   end Register_Object_Class;
+
+   -----------------
+   -- Bind_Object --
+   -----------------
+
+   function Bind_Object
+     (This : in out Instance'Class;
+      Obj  : not null Foreign_Reference)
+      return Object
+   is
+      New_Slot : constant Foreign_Slot :=
+                   (Ref => Obj, Pinned => True, Marked => False);
+      Index    : Natural;
+   begin
+      if This.Free_Slots.Is_Empty then
+         Index := Natural (This.Foreign.Length);
+         This.Foreign.Append (New_Slot);
+      else
+         Index := This.Free_Slots.Last_Element;
+         This.Free_Slots.Delete_Last;
+         This.Foreign.Replace_Element (Index, New_Slot);
+      end if;
+      return Foreign_Object (Index);
+   end Bind_Object;
+
+   -----------
+   -- Unpin --
+   -----------
+
+   procedure Unpin
+     (This : in out Instance'Class;
+      O    : Object)
+   is
+      Index : constant Natural := Foreign_Object_Index (O);
+      Slot  : Foreign_Slot     := This.Foreign (Index);
+   begin
+      Slot.Pinned := False;
+      This.Foreign.Replace_Element (Index, Slot);
+   end Unpin;
+
+   -------------------------
+   -- Mark_Foreign_Object --
+   -------------------------
+
+   --  If O is a foreign object that is not yet marked this cycle, mark it and
+   --  forward its Object children into to-space (via Visit).  Returns True iff
+   --  it was newly marked.  The mark flag makes this idempotent, which is what
+   --  breaks cycles: a foreign object reached a second time is skipped.
+
+   function Mark_Foreign_Object
+     (This : in out Instance'Class;
+      O    : Object)
+      return Boolean
+   is
+      procedure Forward (Child : in out Object);
+
+      procedure Forward (Child : in out Object) is
+      begin
+         Skit.Memory.Mark (This.Core, Child);
+      end Forward;
+
+      Result : Boolean := False;
+   begin
+      if Is_Foreign_Object (O) then
+         declare
+            Index : constant Natural := Foreign_Object_Index (O);
+         begin
+            if Index < Natural (This.Foreign.Length) then
+               declare
+                  Slot : Foreign_Slot := This.Foreign (Index);
+               begin
+                  if Slot.Ref /= null and then not Slot.Marked then
+                     Slot.Marked := True;
+                     This.Foreign.Replace_Element (Index, Slot);
+                     Slot.Ref.Visit (Forward'Access);
+                     Result := True;
+                  end if;
+               end;
+            end if;
+         end;
+      end if;
+      return Result;
+   end Mark_Foreign_Object;
+
+   -------------------------
+   -- Mark_Pinned_Foreign --
+   -------------------------
+
+   --  Mark every pinned foreign object (an unconditional root) and forward its
+   --  children.  Called once during the mark phase, before the Cheney scan.
+
+   procedure Mark_Pinned_Foreign (This : in out Instance'Class) is
+   begin
+      for K in 1 .. Natural (This.Foreign.Length) loop
+         declare
+            Index   : constant Natural := K - 1;
+            Discard : Boolean;
+         begin
+            if This.Foreign (Index).Pinned then
+               Discard := This.Mark_Foreign_Object (Foreign_Object (Index));
+               pragma Unreferenced (Discard);
+            end if;
+         end;
+      end loop;
+   end Mark_Pinned_Foreign;
+
+   ------------------------
+   -- Mark_Foreign_Roots --
+   ------------------------
+
+   --  Mark foreign objects referenced *directly* by a root (a register, an
+   --  environment value, or a cell being appended) rather than through a live
+   --  cell -- Discover_Foreign only scans cells, so these would otherwise be
+   --  missed and wrongly swept.
+
+   procedure Mark_Foreign_Roots
+     (This : in out Instance'Class;
+      Xs   : Object_Array)
+   is
+      procedure Mark_One (O : Object);
+
+      procedure Mark_One (O : Object) is
+         Discard : constant Boolean := This.Mark_Foreign_Object (O);
+      begin
+         pragma Unreferenced (Discard);
+      end Mark_One;
+   begin
+      for X of This.Internal loop
+         Mark_One (X);
+      end loop;
+      for X of This.R loop
+         Mark_One (X);
+      end loop;
+      for X of This.Environment loop
+         Mark_One (X);
+      end loop;
+      for X of Xs loop
+         Mark_One (X);
+      end loop;
+   end Mark_Foreign_Roots;
+
+   ----------------------
+   -- Discover_Foreign --
+   ----------------------
+
+   --  Walk the live cell set; for each foreign payload not yet marked, mark it
+   --  and forward its children.  Returns True if any new object was marked, so
+   --  the caller re-runs the Cheney scan (draining the newly forwarded
+   --  children) and calls again -- reaching a fixpoint that marks every
+   --  foreign object reachable through the heap, including nested and
+   --  mutually-referencing ones.  Forwarding grows the live set past the
+   --  snapshot Count; those cells are covered on the next round, after the
+   --  scan drains them.
+
+   function Discover_Foreign (This : in out Instance'Class) return Boolean is
+      Progress : Boolean := False;
+      Count    : constant Natural :=
+                   Skit.Memory.Live_Cell_Count (This.Core);
+      Left     : Object;
+      Right    : Object;
+   begin
+      if This.Foreign.Is_Empty then
+         return False;   --  no foreign objects: skip the live-cell walk
+      end if;
+      for K in 1 .. Count loop
+         Skit.Memory.Live_Cell (This.Core, K - 1, Left, Right);
+         if This.Mark_Foreign_Object (Left) then
+            Progress := True;
+         end if;
+         if This.Mark_Foreign_Object (Right) then
+            Progress := True;
+         end if;
+      end loop;
+      return Progress;
+   end Discover_Foreign;
+
+   -------------------
+   -- Sweep_Foreign --
+   -------------------
+
+   --  After discovery has marked every reachable foreign object, free the
+   --  rest (dispatching Free + reclaim the slot for reuse) and clear the mark
+   --  on the survivors for the next collection.
+
+   procedure Sweep_Foreign (This : in out Instance'Class) is
+   begin
+      for K in 1 .. Natural (This.Foreign.Length) loop
+         declare
+            Index : constant Natural := K - 1;
+            Slot  : Foreign_Slot     := This.Foreign (Index);
+         begin
+            if Slot.Ref /= null then
+               if Slot.Marked then
+                  Slot.Marked := False;
+                  This.Foreign.Replace_Element (Index, Slot);
+               else
+                  Slot.Ref.Free;
+                  Free_Reference (Slot.Ref);
+                  This.Foreign.Replace_Element
+                    (Index, (Ref => null, Pinned => False, Marked => False));
+                  This.Free_Slots.Append (Index);
+               end if;
+            end if;
+         end;
+      end loop;
+   end Sweep_Foreign;
+
+   -------------------------
+   -- Foreign_Object_Ref --
+   -------------------------
+
+   function Foreign_Object_Ref
+     (This : Instance'Class;
+      O    : Object)
+      return Foreign_Reference
+   is (This.Foreign (Foreign_Object_Index (O)).Ref);
+
+   -------------------------
+   -- Deserialize_Foreign --
+   -------------------------
+
+   function Deserialize_Foreign
+     (This     : Instance'Class;
+      Class    : String;
+      Bytes    : Ada.Streams.Stream_Element_Array;
+      Children : Object_Array)
+      return Foreign_Reference
+   is
+      Pos : constant Class_Maps.Cursor := This.Classes.Find (Class);
+   begin
+      if Class_Maps.Has_Element (Pos) then
+         return Class_Maps.Element (Pos) (Bytes, Children);
+      else
+         return null;
+      end if;
+   end Deserialize_Foreign;
+
+   --------------------------
+   -- Free_Foreign_Objects --
+   --------------------------
+
+   procedure Free_Foreign_Objects (This : in out Instance'Class) is
+   begin
+      for K in 1 .. Natural (This.Foreign.Length) loop
+         declare
+            Index : constant Natural := K - 1;
+            Slot  : Foreign_Slot     := This.Foreign (Index);
+         begin
+            if Slot.Ref /= null then
+               Slot.Ref.Free;
+               Free_Reference (Slot.Ref);
+               This.Foreign.Replace_Element
+                 (Index, (Ref => null, Pinned => False, Marked => False));
+            end if;
+         end;
+      end loop;
+      This.Foreign.Clear;
+      This.Free_Slots.Clear;
+   end Free_Foreign_Objects;
 
 end Skit.Machines;
