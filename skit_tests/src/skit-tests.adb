@@ -1285,6 +1285,114 @@ package body Skit.Tests is
          Check ("image: fingerprint changes with exports", Fp_AB /= Fp_AC);
       end;
 
+      --  Sibling resolution: an import prefers a co-loaded module's export
+      --  over the standing environment.
+      declare
+         Ha : constant Skit.Handles.Handle := New_Machine;
+         Hb : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+         Path_A : constant String := "test_a.skix";
+         Path_B : constant String := "test_b.skix";
+
+         function From_A (Name : String) return Object is (Ha.Lookup (Name));
+      begin
+         --  Module A imports "shared"; module B exports "shared" as K 42.
+         Ha.Bind ("shared", Ha.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+         Ha.Bind
+           ("use",
+            Ha.Install
+              (Skit.Compiler.Compile
+                 (T.Apply (T.Symbol ("shared"), T.Const (7))),
+               From_A'Access));
+         Img.Write (Ha, Path_A, [1 => U ("use")]);
+
+         Hb.Bind
+           ("shared",
+            Hb.Install
+              (Skit.Compiler.Compile
+                 (T.Apply (T.Combinator (Skit.K), T.Const (42))),
+               From_A'Access));
+         Img.Write (Hb, Path_B, [1 => U ("shared")]);
+
+         --  The environment already binds "shared" -- the sibling must win.
+         Hr.Bind ("shared", To_Object (999));
+         Img.Read (Hr, Img.Name_Array'[U (Path_A), U (Path_B)]);
+
+         declare
+            Use_G  : constant Object := Hr.Lookup ("use");
+            Shared : constant Object := Hr.Lookup ("shared");
+         begin
+            Check ("sibling: import bound to sibling export",
+                   Is_Application (Use_G)
+                   and then Hr.Left (Use_G) = Shared);
+            Check ("sibling: sibling export wins over environment",
+                   Is_Application (Shared)
+                   and then Hr.Left (Shared) = Skit.K
+                   and then Hr.Right (Shared) = To_Object (42));
+         end;
+
+         if Ada.Directories.Exists (Path_A) then
+            Ada.Directories.Delete_File (Path_A);
+         end if;
+         if Ada.Directories.Exists (Path_B) then
+            Ada.Directories.Delete_File (Path_B);
+         end if;
+      end;
+
+      --  Mutual references: A imports B, B imports A.  Only the two-pass load
+      --  can link them -- every export is registered before any import.
+      declare
+         Ha : constant Skit.Handles.Handle := New_Machine;
+         Hb : constant Skit.Handles.Handle := New_Machine;
+         Hr : constant Skit.Handles.Handle := New_Machine;
+         Path_A : constant String := "test_a.skix";
+         Path_B : constant String := "test_b.skix";
+
+         function From_A (Name : String) return Object is (Ha.Lookup (Name));
+         function From_B (Name : String) return Object is (Hb.Lookup (Name));
+      begin
+         Ha.Bind ("b", Ha.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+         Ha.Bind
+           ("a",
+            Ha.Install
+              (Skit.Compiler.Compile
+                 (T.Apply (T.Symbol ("b"), T.Const (1))),
+               From_A'Access));
+         Img.Write (Ha, Path_A, [1 => U ("a")]);
+
+         Hb.Bind ("a", Hb.Primitive (Arithmetic_Evaluator'(Fn => Add)));
+         Hb.Bind
+           ("b",
+            Hb.Install
+              (Skit.Compiler.Compile
+                 (T.Apply (T.Symbol ("a"), T.Const (2))),
+               From_B'Access));
+         Img.Write (Hb, Path_B, [1 => U ("b")]);
+
+         Img.Read (Hr, Img.Name_Array'[U (Path_A), U (Path_B)]);
+
+         declare
+            Ga : constant Object := Hr.Lookup ("a");
+            Gb : constant Object := Hr.Lookup ("b");
+         begin
+            Check ("sibling: mutual import a -> b",
+                   Is_Application (Ga)
+                   and then Hr.Left (Ga) = Gb
+                   and then Hr.Right (Ga) = To_Object (1));
+            Check ("sibling: mutual import b -> a",
+                   Is_Application (Gb)
+                   and then Hr.Left (Gb) = Ga
+                   and then Hr.Right (Gb) = To_Object (2));
+         end;
+
+         if Ada.Directories.Exists (Path_A) then
+            Ada.Directories.Delete_File (Path_A);
+         end if;
+         if Ada.Directories.Exists (Path_B) then
+            Ada.Directories.Delete_File (Path_B);
+         end if;
+      end;
+
       if Ada.Directories.Exists (Path) then
          Ada.Directories.Delete_File (Path);
       end if;

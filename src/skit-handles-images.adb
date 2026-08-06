@@ -5,6 +5,7 @@ with Ada.Containers.Ordered_Sets;
 with Ada.Containers.Vectors;
 with Ada.Streams.Stream_IO;
 with Ada.Unchecked_Conversion;
+with Ada.Unchecked_Deallocation;
 
 with Skit.Machines;
 
@@ -674,26 +675,50 @@ package body Skit.Handles.Images is
       end;
    end Write;
 
-   ----------
-   -- Read --
-   ----------
+   type Byte_Array_Access is access Byte_Array;
 
-   procedure Read
+   procedure Free is
+     new Ada.Unchecked_Deallocation (Byte_Array, Byte_Array_Access);
+
+   --  What a module keeps between the two link passes: its bytes, its cells,
+   --  and where its import table and string pool live.
+   type Module_State is
+      record
+         Data       : Byte_Array_Access;
+         Cells      : Object_Vectors.Vector;
+         Off_Import : Offset := -1;
+         Off_Pool   : Offset := -1;
+      end record;
+
+   -----------------
+   -- Load_Module --
+   -----------------
+
+   --  Pass 1 for one module: read and validate it, materialize its cells,
+   --  foreign objects and symbols, back-patch internal references, and bind
+   --  its exports -- but leave its imports as sentinels for pass 2.
+
+   procedure Load_Module
      (This : Handle'Class;
-      Path : String)
+      Path : String;
+      M    : out Module_State)
    is
       File : Ada.Streams.Stream_IO.File_Type;
    begin
       Ada.Streams.Stream_IO.Open
         (File, Ada.Streams.Stream_IO.In_File, Path);
-
       declare
          Length : constant Ada.Streams.Stream_IO.Count :=
                     Ada.Streams.Stream_IO.Size (File);
-         D      : Byte_Array (0 .. Offset (Length) - 1);
          Last   : Offset;
+      begin
+         M.Data := new Byte_Array (0 .. Offset (Length) - 1);
+         Ada.Streams.Stream_IO.Read (File, M.Data.all, Last);
+         Ada.Streams.Stream_IO.Close (File);
+      end;
 
-         A          : Object_Vectors.Vector;
+      declare
+         D          : Byte_Array renames M.Data.all;
          Sym        : Object_Vectors.Vector;
          Frn        : Object_Vectors.Vector;
          Off_Pool   : Offset := -1;
@@ -704,9 +729,6 @@ package body Skit.Handles.Images is
          Off_Frn    : Offset := -1;
          C          : Offset := 0;
       begin
-         Ada.Streams.Stream_IO.Read (File, D, Last);
-         Ada.Streams.Stream_IO.Close (File);
-
          if D'Length < 26 then
             raise Image_Error with "image too short";
          end if;
@@ -813,7 +835,7 @@ package body Skit.Handles.Images is
             N      : constant Natural := Natural (Get_U32 (D, Cursor));
          begin
             for J in 1 .. N loop
-               A.Append (This.H.Machine.Append (Skit.I, Skit.I));
+               M.Cells.Append (This.H.Machine.Append (Skit.I, Skit.I));
             end loop;
          end;
 
@@ -836,7 +858,8 @@ package body Skit.Handles.Images is
                      Children    : Object_Array (1 .. Child_Count);
                   begin
                      for K in Children'Range loop
-                        Children (K) := Get_Object (D, Cursor, A, Sym, Frn);
+                        Children (K) :=
+                          Get_Object (D, Cursor, M.Cells, Sym, Frn);
                      end loop;
                      declare
                         Len   : constant Natural :=
@@ -844,8 +867,8 @@ package body Skit.Handles.Images is
                         Bytes : Byte_Array (1 .. Offset (Len));
                         Ref   : Foreign_Reference;
                      begin
-                        for M in Bytes'Range loop
-                           Bytes (M) := D (Cursor);
+                        for K in Bytes'Range loop
+                           Bytes (K) := D (Cursor);
                            Cursor := Cursor + 1;
                         end loop;
                         Ref := This.H.Machine.Deserialize_Foreign
@@ -861,73 +884,129 @@ package body Skit.Handles.Images is
             end;
          end if;
 
-         --  Cell back-patch (symbols and foreign objects now exist).
+         --  Cell back-patch (symbols and foreign objects now exist).  Import
+         --  slots keep their Undefined sentinel until pass 2.
          declare
             Cursor : Offset := Off_Cells + 4;   --  skip the u32 cell count
          begin
-            for J in 1 .. Natural (A.Length) loop
+            for J in 1 .. Natural (M.Cells.Length) loop
                declare
                   Left  : constant Object :=
-                            Get_Object (D, Cursor, A, Sym, Frn);
+                            Get_Object (D, Cursor, M.Cells, Sym, Frn);
                   Right : constant Object :=
-                            Get_Object (D, Cursor, A, Sym, Frn);
+                            Get_Object (D, Cursor, M.Cells, Sym, Frn);
                begin
-                  This.H.Machine.Set_Left (A (J - 1), Left);
-                  This.H.Machine.Set_Right (A (J - 1), Right);
+                  This.H.Machine.Set_Left (M.Cells (J - 1), Left);
+                  This.H.Machine.Set_Right (M.Cells (J - 1), Right);
                end;
             end loop;
          end;
 
-         --  Imports: resolve each name in this handle and patch the sentinel
-         --  slot.  (Single-module: resolution is the standing environment.)
-         if Off_Import >= 0 then
-            declare
-               Cursor : Offset := Off_Import;
-               Count  : constant Natural := Natural (Get_U32 (D, Cursor));
-            begin
-               for J in 1 .. Count loop
-                  declare
-                     Cell_Index : constant Natural :=
-                                    Natural (Get_U32 (D, Cursor));
-                     Side       : constant Unsigned_8 := Get_U8 (D, Cursor);
-                     Name_Ref   : constant Unsigned_32 := Get_U32 (D, Cursor);
-                     Name       : constant String :=
-                                    Read_Name
-                                      (D, Off_Pool + Offset (Name_Ref));
-                     Value      : constant Object := This.Lookup (Name);
-                  begin
-                     if Value = Undefined then
-                        raise Image_Error with "unresolved import: " & Name;
-                     end if;
-                     if Side = 0 then
-                        This.H.Machine.Set_Left (A (Cell_Index), Value);
-                     else
-                        This.H.Machine.Set_Right (A (Cell_Index), Value);
-                     end if;
-                  end;
-               end loop;
-            end;
-         end if;
-
-         --  Exports: bind each into this handle.
+         --  Exports: bind each into this handle, so a sibling module loaded in
+         --  the same pass can resolve an import against it.
          declare
             Cursor : Offset := Off_Exp;
-            M      : constant Natural := Natural (Get_U32 (D, Cursor));
+            Count  : constant Natural := Natural (Get_U32 (D, Cursor));
          begin
-            for J in 1 .. M loop
+            for J in 1 .. Count loop
                declare
                   Name_Ref : constant Unsigned_32 := Get_U32 (D, Cursor);
                   Name     : constant String :=
                                Read_Name
                                  (D, Off_Pool + Offset (Name_Ref));
                   Value    : constant Object :=
-                               Get_Object (D, Cursor, A, Sym, Frn);
+                               Get_Object (D, Cursor, M.Cells, Sym, Frn);
                begin
                   This.Bind (Name, Value);
                end;
             end loop;
          end;
+
+         M.Off_Import := Off_Import;
+         M.Off_Pool   := Off_Pool;
       end;
+   end Load_Module;
+
+   ---------------------
+   -- Resolve_Imports --
+   ---------------------
+
+   --  Pass 2 for one module: resolve each import name against this handle
+   --  (sibling exports were bound in pass 1, ahead of the environment) and
+   --  patch the sentinel slot.
+
+   procedure Resolve_Imports
+     (This : Handle'Class;
+      M    : Module_State)
+   is
+      D : Byte_Array renames M.Data.all;
+   begin
+      if M.Off_Import < 0 then
+         return;
+      end if;
+      declare
+         Cursor : Offset := M.Off_Import;
+         Count  : constant Natural := Natural (Get_U32 (D, Cursor));
+      begin
+         for J in 1 .. Count loop
+            declare
+               Cell_Index : constant Natural := Natural (Get_U32 (D, Cursor));
+               Side       : constant Unsigned_8 := Get_U8 (D, Cursor);
+               Name_Ref   : constant Unsigned_32 := Get_U32 (D, Cursor);
+               Name       : constant String :=
+                              Read_Name (D, M.Off_Pool + Offset (Name_Ref));
+               Value      : constant Object := This.Lookup (Name);
+            begin
+               if Value = Undefined then
+                  raise Image_Error with "unresolved import: " & Name;
+               end if;
+               if Side = 0 then
+                  This.H.Machine.Set_Left (M.Cells (Cell_Index), Value);
+               else
+                  This.H.Machine.Set_Right (M.Cells (Cell_Index), Value);
+               end if;
+            end;
+         end loop;
+      end;
+   end Resolve_Imports;
+
+   ----------
+   -- Read --
+   ----------
+
+   procedure Read
+     (This : Handle'Class;
+      Path : String)
+   is
+      M : Module_State;
+   begin
+      Load_Module (This, Path, M);
+      Resolve_Imports (This, M);
+      Free (M.Data);
+   end Read;
+
+   ----------
+   -- Read --
+   ----------
+
+   procedure Read
+     (This  : Handle'Class;
+      Paths : Name_Array)
+   is
+      use Ada.Strings.Unbounded;
+      Modules : array (Paths'Range) of Module_State;
+   begin
+      --  Pass 1: materialize every module and register all their exports.
+      for I in Paths'Range loop
+         Load_Module (This, To_String (Paths (I)), Modules (I));
+      end loop;
+      --  Pass 2: resolve every module's imports against the merged exports.
+      for I in Paths'Range loop
+         Resolve_Imports (This, Modules (I));
+      end loop;
+      for I in Paths'Range loop
+         Free (Modules (I).Data);
+      end loop;
    end Read;
 
    -----------------

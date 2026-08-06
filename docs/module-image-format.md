@@ -31,12 +31,17 @@ raw object word.
   cells back-patched, so cells and foreign objects re-link mutually.
 - **Fingerprint / Checksum** use FNV-1a-32: the fingerprint hashes the sorted
   export names; the checksum covers the whole image and is verified on load.
+- **Multi-module linking** — a `Read` over several images runs the two-pass
+  load of the Decision: pass 1 materializes every module and registers all
+  their exports (bound ahead of the environment), pass 2 resolves every
+  module's imports, so modules may reference one another mutually. Cells are
+  reserved for all modules up front (no collection runs).
 
-Not yet implemented: per-export **Annotations** and the cross-module
-**sibling-export** link pass (imports resolve only against the loading handle's
-environment). The writer raises `Image_Error` on a primitive with no bound name
-or a cyclic foreign object; the loader raises on a checksum mismatch, an
-unresolved import, or an unregistered foreign class.
+Not yet implemented: per-export **Annotations**. The writer raises
+`Image_Error` on a primitive with no bound name or a cyclic foreign object; the
+loader raises on a checksum mismatch, an unresolved import, or an unregistered
+foreign class. Duplicate export names across co-loaded modules are currently
+last-wins (the ADR's resolved question calls for a hard error).
 
 ## Conventions
 
