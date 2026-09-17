@@ -89,6 +89,15 @@ begin
    Test ("sum (fromTo 1 100)", 5050);
    Test ("(\x.+ x x) (+ 4 (trace 5))", 18);
    Test ("seq (+ 1 2) (+ 2 3)", 5);
+
+   --  Regression: seq's strict argument reducing to a bare, wholly
+   --  unapplied combinator (the shape a Scott-encoded nullary value such
+   --  as unit collapses to).  The under-saturated head used to be pushed
+   --  only after Evaluate_Application's main loop exited, too late for the
+   --  pending primitive call Eval_Suspension resumes immediately, so
+   --  Call_Primitive popped one item short and read past its arguments.
+
+   Test ("seq I (+ 1 2)", 3);
    Test ("eq #maxInt 536870911 1 0", 1);
    Test ("+ 0 #minInt", -536870912);
    Test_Foreign_Objects;

@@ -629,19 +629,33 @@ package body Skit.Machines is
          end if;
 
          if not Changed then
+
+            --  A non-primitive head (a scalar result) was already pushed onto
+            --  the stack by the else branch above, where it also feeds the
+            --  strict-argument resumption in Eval_Suspension below.  Only a
+            --  primitive head (a bare combinator or an under-saturated partial
+            --  application) still needs pushing here; pushing an atom again
+            --  would leave a duplicate on the stack.
+            --
+            --  This must happen before Eval_Suspension, not once after this
+            --  loop has fully exited: an under-saturated combinator can be
+            --  exactly the value a pending primitive call's strict argument
+            --  just reduced to (e.g. unit's Scott encoding collapsing to the
+            --  bare I combinator).  When it is, Eval_Suspension immediately
+            --  resumes Advance_Primitive, whose Call_Primitive pops exactly
+            --  Argument_Count items off this stack expecting to find that
+            --  value among them.  Deferring the push left it stranded in It,
+            --  one item short, and Call_Primitive's Pop read past the real
+            --  arguments into unrelated stack contents.
+
+            if Is_Primitive (It) then
+               This.Push (It);
+            end if;
+
             Eval_Suspension;
          end if;
       end loop;
 
-      --  A non-primitive head (a scalar result) was already pushed onto the
-      --  stack by the else branch in the loop above, where it also feeds the
-      --  strict-argument resumption in Eval_Suspension.  Only a primitive
-      --  head (a bare combinator or an under-saturated partial application)
-      --  still needs pushing here; pushing an atom again would leave a
-      --  duplicate on the stack.
-      if Is_Primitive (It) then
-         This.Push (It);
-      end if;
       Collect_Result;
 
    end Evaluate_Application;
