@@ -13,6 +13,11 @@ package body Skit.Machines is
    Trace      : constant Boolean := False;
    Instrument : constant Boolean := False;
 
+   --  How far the unwind loop will follow a chain of App (I, x)
+   --  indirections before giving up and letting the main loop take a turn.
+   --  See Shorten in Evaluate_Application.
+   Max_Shorten : constant := 100;
+
    function Apply
      (This        : in out Instance'Class;
       Left, Right : Object)
@@ -191,6 +196,8 @@ package body Skit.Machines is
       is (Skit.Memory.Right (This.Core, App));
 
       function Pop (Args : out Object_Array) return Boolean;
+
+      function Shorten (Parent : Object) return Object;
 
       function Top return Object
       is (Skit.Memory.Left (This.Core, This.Internal (Control)));
@@ -592,6 +599,52 @@ package body Skit.Machines is
          return True;
       end Pop;
 
+      -------------
+      -- Shorten --
+      -------------
+
+      --  Descend from a spine node to its function, collapsing any
+      --  App (I, y) indirections on the way.
+      --
+      --  Eval_Combinator cannot overwrite an I or K redex root with a copy
+      --  of the result the way it does for S, B and C: that result is an
+      --  argument node that existed before the redex and may have other
+      --  parents, so copying its cells would clone it rather than alias it,
+      --  and the in-place update that later reduces one copy would be
+      --  invisible to the rest.  It leaves an App (I, x) indirection
+      --  instead.  Here the parent node is in hand, so the chain can be
+      --  spliced out by pointing the parent straight at x -- aliasing, not
+      --  copying.  Sharing is preserved, the skipped cells fall out of the
+      --  live set at the next collection, and neither the hop nor the
+      --  re-reduction of the I redex is ever paid again.
+      --
+      --  Nearly free: Left (Child) is the value the next iteration of the
+      --  unwind loop would load anyway.
+      --
+      --  Bounded because the graph can be cyclic.  Y I ties the knot
+      --  c = App (I, c), which is bottom; an unbounded splice would spin in
+      --  here instead of diverging in the main loop, where tracing and the
+      --  collector still run.
+
+      function Shorten (Parent : Object) return Object is
+         Child : Object  := Left (Parent);
+         Hops  : Natural := 0;
+      begin
+         while Hops < Max_Shorten
+           and then Is_App (Child)
+           and then Left (Child) = Skit.I
+         loop
+            Child := Right (Child);
+            Hops  := Hops + 1;
+         end loop;
+
+         if Hops > 0 then
+            Skit.Memory.Set_Left (This.Core, Parent, Child);
+         end if;
+
+         return Child;
+      end Shorten;
+
    begin
 
       while Changed loop
@@ -604,7 +657,9 @@ package body Skit.Machines is
                  ("push: " & This.Debug_Image (Right (It)));
             end if;
             This.Push (Control, It);
-            It := Skit.Memory.Left (This.Core, Top);
+            --  Read back through Top rather than reusing It: the push above
+            --  can collect, and It is not a root.
+            It := Shorten (Top);
          end loop;
 
          if Trace then
