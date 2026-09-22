@@ -16,6 +16,9 @@ jobs:
         
     - name: Set up alire
       uses: alire-project/setup-alire@v2
+      with:
+        version: 2.1.0
+        toolchain: gnat_native^15 gprbuild
 
     - name: Build Skit_Tests
       run: cd skit_tests; alr build
