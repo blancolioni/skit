@@ -1,11 +1,11 @@
 package body Skit.Memory is
 
-   --  Compile-time gate for the GC self-checks below. When False (the
-   --  default), the constant folds and every guarded block is
-   --  dead-code-eliminated, so release builds pay nothing. Flip to True to
-   --  run heap-integrity validation around each collection and to poison the
-   --  dead from-space -- this caught the cached-pointer bug in ADR 0008.
-   Heap_Checks : constant Boolean := False;
+   --  Compile-time gate for poisoning the dead from-space after each
+   --  collection. When False (the default), the constant folds and the
+   --  guarded block is dead-code-eliminated. The heap-integrity check that
+   --  used to sit behind this flag is now the Heap_Valid contract on
+   --  After_GC.
+   Poison_Dead_Space : constant Boolean := False;
 
    --  Poison value written over every dead from-space cell after a collection.
    --  An application pointer to the top of the address space: it lands outside
@@ -13,10 +13,6 @@ package body Skit.Memory is
    --  heap check or faults on the out-of-range index instead of silently
    --  returning plausible-looking garbage.
    Invalid : constant Object := Application (Object_Payload'Last);
-
-   procedure Check_Heap
-     (This  : Instance;
-      Where : String);
 
    procedure Poison_From_Space (This : in out Instance);
 
@@ -39,14 +35,24 @@ package body Skit.Memory is
    function Copy
      (This    : in out Instance;
       Address : Cell_Address)
-      return Cell_Address;
+      return Cell_Address
+     with Pre  => This.Free < This.Top
+                  and then In_From_Space (This, Application (Address)),
+          Post => Copy'Result = This.Free'Old
+                  and then This.Free = This.Free'Old + 1;
+   --  The live set has to fit in one semispace; the Pre is where that
+   --  assumption is finally stated.
 
    function Move
      (This : in out Instance;
       Item : Object)
       return Object;
 
-   procedure Flip (This : in out Instance);
+   procedure Flip (This : in out Instance)
+     with Post => This.To_Space = This.From_Space'Old
+                  and then This.From_Space = This.To_Space'Old
+                  and then This.Free = This.To_Space
+                  and then This.Scan = This.To_Space;
 
    --------------
    -- After_GC --
@@ -57,11 +63,9 @@ package body Skit.Memory is
       This.Reclaimed := This.Reclaimed
         + (Natural (This.Top) - Natural (This.Free));
       This.Static_Top := This.Free;
-      if Heap_Checks then
-         --  Every live cell now lives in to-space and points only within it.
-         Check_Heap (This, "after GC");
+      if Poison_Dead_Space then
          --  The from-space is dead; poison it so any surviving stale pointer
-         --  into it is caught on the next collection rather than followed.
+         --  into it is caught rather than followed.
          Poison_From_Space (This);
       end if;
    end After_GC;
@@ -77,6 +81,10 @@ package body Skit.Memory is
       return Object
    is
    begin
+      pragma Assert
+        (not Is_Full (This)
+         and then Is_Storable (This, Left)
+         and then Is_Storable (This, Right));
       This.Core (This.Free) := (Left, Right);
       This.Free := @ + 1;
       This.Alloc_Count := @ + 1;
@@ -89,11 +97,6 @@ package body Skit.Memory is
 
    procedure Before_GC (This : in out Instance) is
    begin
-      if Heap_Checks then
-         --  Validate the live set before the flip, while it is still the
-         --  to-space; a corrupt pointer here predates this collection.
-         Check_Heap (This, "before GC");
-      end if;
       Flip (This);
       if This.Epoch_Remembered > This.Max_Remembered then
          This.Max_Remembered := This.Epoch_Remembered;
@@ -103,56 +106,6 @@ package body Skit.Memory is
       This.Static_Copied := 0;
       This.Transient_Copied := 0;
    end Before_GC;
-
-   ----------------
-   -- Check_Heap --
-   ----------------
-
-   procedure Check_Heap
-     (This  : Instance;
-      Where : String)
-   is
-      Low  : constant Cell_Address := This.To_Space;
-      High : constant Cell_Address := This.Free;
-
-      procedure Check_Child
-        (Field   : String;
-         Address : Cell_Address;
-         Child   : Object);
-
-      procedure Check_Child
-        (Field   : String;
-         Address : Cell_Address;
-         Child   : Object)
-      is
-      begin
-         if Is_Application (Child)
-           and then Payload (Child) not in Low .. High - 1
-         then
-            raise Program_Error with
-              "heap check (" & Where & "): " & Field
-              & " of cell" & Cell_Address'Image (Address)
-              & " points to" & Cell_Address'Image (Payload (Child))
-              & " outside to-space [" & Cell_Address'Image (Low)
-              & " .." & Cell_Address'Image (High) & ")";
-         end if;
-      end Check_Child;
-
-   begin
-      --  Guard: Cell_Address is modular, so an empty live set (High = Low)
-      --  would make High - 1 wrap to the top of the address space.
-      if High = Low then
-         return;
-      end if;
-      for Address in Low .. High - 1 loop
-         declare
-            Cell : Cell_Type renames This.Core (Address);
-         begin
-            Check_Child ("left", Address, Cell.Left);
-            Check_Child ("right", Address, Cell.Right);
-         end;
-      end loop;
-   end Check_Heap;
 
    ----------
    -- Copy --
@@ -191,6 +144,8 @@ package body Skit.Memory is
    procedure GC (This : in out Instance) is
    begin
       while This.Scan < This.Free loop
+         pragma Loop_Invariant
+           (Valid (This) and then This.Scan < This.Free);
          declare
             Cell      : Cell_Type renames This.Core (This.Scan);
             New_Left  : constant Object := Move (This, Cell.Left);
@@ -205,9 +160,6 @@ package body Skit.Memory is
    ---------------
    -- Live_Cell --
    ---------------
-
-   function Live_Cell_Count (This : Instance) return Natural
-   is (Natural (This.Free - This.To_Space));
 
    procedure Live_Cell
      (This  : Instance;
@@ -236,6 +188,7 @@ package body Skit.Memory is
       This.From_Space := From_Space;
       This.To_Space   := To_Space;
       This.Space_Size := Space_Size;
+      This.Scan       := To_Space;
    end Initialize;
 
    -------------
@@ -260,6 +213,7 @@ package body Skit.Memory is
       return Object
    is
    begin
+      pragma Assert (Is_Live (This, App));
       return This.Core (Payload (App)).Left;
    end Left;
 
@@ -329,6 +283,7 @@ package body Skit.Memory is
       return Object
    is
    begin
+      pragma Assert (Is_Live (This, App));
       return This.Core (Payload (App)).Right;
    end Right;
 
@@ -342,6 +297,7 @@ package body Skit.Memory is
       To   : Object)
    is
    begin
+      pragma Assert (Is_Live (This, App) and then Is_Storable (This, To));
       if Payload (App) < This.Static_Top
         and then Is_Application (To)
         and then Payload (To) >= This.Static_Top
@@ -362,6 +318,7 @@ package body Skit.Memory is
       To   : Object)
    is
    begin
+      pragma Assert (Is_Live (This, App) and then Is_Storable (This, To));
       if Payload (App) < This.Static_Top
         and then Is_Application (To)
         and then Payload (To) >= This.Static_Top

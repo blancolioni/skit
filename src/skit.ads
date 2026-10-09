@@ -12,13 +12,19 @@ package Skit is
    type Object is private;
    type Object_Array is array (Positive range <>) of Object;
 
-   function To_Object (X : Integer) return Object;
-   function To_Object (X : Float) return Object;
-   function To_Object (X : Long_Float) return Object;
-
    function Is_Integer (X : Object) return Boolean;
    function To_Integer (X : Object) return Integer
      with Pre => Is_Integer (X);
+
+   function To_Object (X : Integer) return Object
+     with Post => Is_Integer (To_Object'Result)
+                  and then (if X in Min_Integer .. Max_Integer
+                            then To_Integer (To_Object'Result) = X);
+   --  An integer outside Min_Integer .. Max_Integer wraps to the payload
+   --  width, as Int arithmetic does; inside it, the value round-trips.
+
+   function To_Object (X : Float) return Object;
+   function To_Object (X : Long_Float) return Object;
 
    function Is_Float (X : Object) return Boolean;
    function To_Float (X : Object) return Long_Float
@@ -213,35 +219,59 @@ private
    --  top-level Skit package, so the tag/payload layout stays private here.
 
    function Application (Address : Object_Payload) return Object
-   is ((Address, Application_Object));
+   is ((Address, Application_Object))
+     with Post => Is_Application (Application'Result)
+                  and then Payload (Application'Result) = Address;
+
+   --  Each kind of reference below is a base payload plus an index. The
+   --  arithmetic is modular, so an index past the end of its band would
+   --  land silently in the next one; the preconditions rule that out.
 
    --  A primitive function is stored as base + its zero-based slot in the
    --  machine's primitive table; the index round-trips through these two.
 
+   Max_Primitive_Function_Index : constant :=
+     Primitive_Function_Payload'Last - Primitive_Function_Payload'First;
+
    function Primitive_Function (Index : Natural) return Object
    is ((Primitive_Function_Payload'First + Object_Payload (Index),
-        Primitive_Object));
+        Primitive_Object))
+     with Pre  => Index <= Max_Primitive_Function_Index,
+          Post => Is_Primitive_Function (Primitive_Function'Result);
 
    function Primitive_Function_Index (X : Object) return Natural
-   is (Natural (X.Payload - Primitive_Function_Payload'First));
+   is (Natural (X.Payload - Primitive_Function_Payload'First))
+     with Pre => Is_Primitive_Function (X);
 
    --  A symbol is base + its index in the handle's symbol vector.
 
+   Max_Symbol_Index : constant :=
+     Primitive_Variable_Payload'Last - Primitive_Variable_Payload'First;
+
    function Symbol (Index : Natural) return Object
    is ((Primitive_Variable_Payload'First + Object_Payload (Index),
-        Primitive_Object));
+        Primitive_Object))
+     with Pre  => Index <= Max_Symbol_Index,
+          Post => Is_Symbol (Symbol'Result);
 
    function Symbol_Index (X : Object) return Natural
-   is (Natural (X.Payload - Primitive_Variable_Payload'First));
+   is (Natural (X.Payload - Primitive_Variable_Payload'First))
+     with Pre => Is_Symbol (X);
 
    --  A foreign object is base + its slot in the machine's foreign-object
    --  registry; the slot round-trips through these two.
 
+   Max_Foreign_Object_Index : constant :=
+     Foreign_Object_Payload'Last - Foreign_Object_Payload'First;
+
    function Foreign_Object (Index : Natural) return Object
    is ((Foreign_Object_Payload'First + Object_Payload (Index),
-        Primitive_Object));
+        Primitive_Object))
+     with Pre  => Index <= Max_Foreign_Object_Index,
+          Post => Is_Foreign_Object (Foreign_Object'Result);
 
    function Foreign_Object_Index (X : Object) return Natural
-   is (Natural (X.Payload - Foreign_Object_Payload'First));
+   is (Natural (X.Payload - Foreign_Object_Payload'First))
+     with Pre => Is_Foreign_Object (X);
 
 end Skit;

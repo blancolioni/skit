@@ -30,7 +30,9 @@ private package Skit.Machines is
    function Pop
      (This : in out Instance'Class)
       return Object
-     with Inline_Always;
+     with Inline_Always, Pre => not Stack_Empty (This);
+   --  Popping an empty stack would read whatever cell 0 holds; the body
+   --  asserts this too, because an inlined body does not check its Pre.
 
    procedure Push
      (This  : in out Instance'Class;
@@ -45,12 +47,14 @@ private package Skit.Machines is
    function Left
      (This : Instance'Class;
       App  : Object)
-      return Object;
+      return Object
+     with Pre => Is_Application (App);
 
    function Right
      (This : Instance'Class;
       App  : Object)
-      return Object;
+      return Object
+     with Pre => Is_Application (App);
 
    procedure Set_Left
      (This : in out Instance'Class;
@@ -98,10 +102,17 @@ private package Skit.Machines is
    --  starts pinned (an unconditional GC root) so it survives until it is
    --  safely stored in a rooted cell; call Unpin once it is.
 
+   function Is_Bound_Object
+     (This : Instance'Class;
+      O    : Object)
+      return Boolean;
+   --  O references a slot of this machine's foreign-object registry that
+   --  currently holds an object.
+
    procedure Unpin
      (This : in out Instance'Class;
       O    : Object)
-     with Pre => Is_Foreign_Object (O);
+     with Pre => Is_Bound_Object (This, O);
    --  Clear the pin on a bound foreign object; thereafter it is kept only
    --  while reachable from a root.
 
@@ -113,7 +124,7 @@ private package Skit.Machines is
      (This : Instance'Class;
       O    : Object)
       return Foreign_Reference
-     with Pre => Is_Foreign_Object (O);
+     with Pre => Is_Bound_Object (This, O);
    --  The bound reference behind a foreign object (to serialize it).
 
    function Deserialize_Foreign
@@ -211,5 +222,13 @@ private
       App  : Object)
       return Object
    is (Skit.Memory.Right (This.Core, App));
+
+   function Is_Bound_Object
+     (This : Instance'Class;
+      O    : Object)
+      return Boolean
+   is (Is_Foreign_Object (O)
+       and then Foreign_Object_Index (O) <= This.Foreign.Last_Index
+       and then This.Foreign (Foreign_Object_Index (O)).Ref /= null);
 
 end Skit.Machines;
