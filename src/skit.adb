@@ -1,53 +1,41 @@
 with Ada.Unchecked_Conversion;
 
-package body Skit is
+package body Skit
+  with SPARK_Mode
+is
 
    type Transfer_Word is mod 2 ** Integer'Size;
 
-   function To_Integer_Word is
-     new Ada.Unchecked_Conversion (Integer, Transfer_Word);
-
    function To_Float_Word is
      new Ada.Unchecked_Conversion (Float, Transfer_Word);
-
-   function To_Integer
-   is new Ada.Unchecked_Conversion (Transfer_Word, Integer)
-     with Unreferenced;
-
-   function To_Float
-   is new Ada.Unchecked_Conversion (Transfer_Word, Float);
 
    --------------
    -- To_Float --
    --------------
 
-   function To_Float (X : Object) return Long_Float is
+   function To_Float (X : Object) return Long_Float
+     with SPARK_Mode => Off
+   is
+      --  Outside SPARK: an arbitrary word need not be a valid Float, so
+      --  SPARK rejects Float as the target of an unchecked conversion.
+      function To_Float
+      is new Ada.Unchecked_Conversion (Transfer_Word, Float);
    begin
       return Long_Float (To_Float (Transfer_Word (X.Payload) * 4));
    end To_Float;
-
-   ----------------
-   -- To_Integer --
-   ----------------
-
-   function To_Integer (X : Object) return Integer is
-      W : constant Transfer_Word := Transfer_Word (X.Payload);
-   begin
-      if W < 2 ** (Payload_Size - 1) then
-         return Integer (X.Payload);
-      else
-         return -Integer (2 ** Payload_Size - W);
-      end if;
-   end To_Integer;
 
    ---------------
    -- To_Object --
    ---------------
 
    function To_Object (X : Integer) return Object is
-      W : constant Transfer_Word := To_Integer_Word (X);
    begin
-      return (Object_Payload (W and (2 ** Payload_Size - 1)), Integer_Object);
+      --  Two's complement truncated to the payload width, written as
+      --  arithmetic rather than as a conversion to a word and a mask, so
+      --  that the round trip in the Post can be proved. "mod" with a
+      --  positive right operand is never negative.
+      return (Object_Payload (Long_Long_Integer (X) mod 2 ** Payload_Size),
+              Integer_Object);
    end To_Object;
 
    ---------------

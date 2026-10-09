@@ -1,8 +1,38 @@
 # ADR 0004: Adopt SPARK for the Memory Core
 
-- **Status:** Proposed — stages 1 (contracts) and 2 (statistics) landed, proof not yet started (see Status updates 2026-10-09)
+- **Status:** Proposed — stages 1–3 landed: root `Skit` is proved; `Skit.Memory` has contracts but no proof yet (see Status updates 2026-10-09)
 - **Date:** 2026-07-07
 - **Deciders:** Fraser Wilson
+
+## Status update (2026-10-09): stage 3
+
+Root `Skit` is under `SPARK_Mode`, spec and body, and went further than this
+stage asked: not only flow-clean but fully proved at `--level=2` (48 checks:
+47 proved, 1 justified, none unproved).
+
+- **Tooling.** GNATprove 15.1.0 is a dependency of a new, never-built
+  [`proof/`](../../proof/README.md) crate rather than of skit itself, so crates
+  that use skit don't download the prover. The README there says how to run it
+  and what is proved.
+- **What proof needed changing:**
+  - `To_Integer` became an expression function, so that proof sees its
+    definition; without it the round trip in `To_Object`'s `Post` could not be
+    stated, let alone proved.
+  - `To_Object (Integer)` truncates with `mod 2 ** Payload_Size` instead of an
+    unchecked conversion to a word and a mask. Same result, and provable.
+  - `To_Object (Long_Float)` gained `Pre => X` fits in a `Float`: the
+    conversion inside it would otherwise raise.
+  - `Argument_Modes`' class-wide `Post` now fixes the result's bounds
+    (`1 .. Argument_Count`), not just its length. Every implementation in
+    leander and skit already returns exactly that.
+- **Outside the proof, deliberately:** `To_Float`'s body (an arbitrary word
+  need not be a valid `Float`, which SPARK rejects as a conversion target), and
+  the abstract host operations, which have no body here.
+- **Justified:** the feasibility of `Argument_Modes`' class-wide `Post`, which
+  the prover cannot establish through the dispatching `Argument_Count`. Recorded
+  with `pragma Annotate` beside it.
+
+Next is stage 4: `SPARK_Mode` on `Skit.Memory`, proving the stage 1 contracts.
 
 ## Status update (2026-10-09): stage 2
 
