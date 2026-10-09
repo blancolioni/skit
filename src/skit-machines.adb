@@ -98,9 +98,6 @@ package body Skit.Machines is
       return Object
    is
    begin
-      if Instrument then
-         This.Alloc_Count := @ + 1;
-      end if;
       if Skit.Memory.Is_Full (This.Core) then
          declare
             Xs : Object_Array := [Left, Right];

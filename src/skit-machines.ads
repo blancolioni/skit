@@ -202,11 +202,8 @@ private
          Foreign           : Foreign_Object_Vectors.Vector;
          Free_Slots        : Free_Slot_Vectors.Vector;
          Classes           : Class_Maps.Map;
-         Alloc_Count       : Natural := 0;
-         Active_Cells      : Natural := 0;
-         Max_Active_Cells  : Natural := 0;
          GC_Time           : Duration := 0.0;
-         GC_Count          : Natural := 0;
+         GC_Count          : Counter := 0;
          Eval_Time         : Duration := 0.0;
          Core              : Skit.Memory.Instance (Core_Size);
       end record;

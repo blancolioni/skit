@@ -132,28 +132,39 @@ private
 
    type Cell_Array is array (Cell_Address range <>) of Cell_Type;
 
+   --  Everything the collector counts for Report, and nothing it needs in
+   --  order to be correct (ADR 0004 stage 2). The counters are modular, so
+   --  none of them can overflow; Static_Top is only ever compared.
+
+   type Statistics is
+      record
+         Alloc_Count       : Counter := 0;
+         Reclaimed         : Counter := 0;
+         Copied            : Counter := 0;  --  by the last collection
+         Static_Copied     : Counter := 0;
+         Transient_Copied  : Counter := 0;
+         Static_Top        : Cell_Address := 0;
+         --  Free at the end of the last collection: cells below it
+         --  survived that collection ("static"), cells above are younger.
+         --  Write-barrier instrumentation from ADR 0008: count
+         --  Set_Left/Set_Right writes that store a young application
+         --  pointer into a static cell -- the old->young references a
+         --  generational collector would keep in a remembered set.
+         Remembered_Writes : Counter := 0;  --  total over the run
+         Epoch_Remembered  : Counter := 0;  --  in the current inter-GC epoch
+         Max_Remembered    : Counter := 0;  --  max epoch count seen
+      end record;
+
    type Instance (Last : Cell_Address) is limited
       record
-         Core              : Cell_Array (0 .. Last);
-         Top               : Cell_Address := 0;
-         Free              : Cell_Address := 0;
-         From_Space        : Cell_Address := 0;
-         To_Space          : Cell_Address := 0;
-         Space_Size        : Cell_Address := 0;
-         Scan              : Cell_Address := 0;
-         Copied            : Natural := 0;
-         Static_Copied     : Natural := 0;
-         Transient_Copied  : Natural := 0;
-         Alloc_Count       : Natural := 0;
-         Reclaimed         : Natural := 0;
-         Static_Top        : Cell_Address := 0;
-         --  Write-barrier instrumentation: count Set_Left/Set_Right writes
-         --  that store a young (this-epoch) application pointer into a static
-         --  (survived-last-GC) cell -- i.e. the old->young references a
-         --  generational nursery collector would keep in a remembered set.
-         Remembered_Writes : Natural := 0;  --  total over the run
-         Epoch_Remembered  : Natural := 0;  --  in the current inter-GC epoch
-         Max_Remembered    : Natural := 0;  --  max epoch count seen
+         Core       : Cell_Array (0 .. Last);
+         Top        : Cell_Address := 0;
+         Free       : Cell_Address := 0;
+         From_Space : Cell_Address := 0;
+         To_Space   : Cell_Address := 0;
+         Space_Size : Cell_Address := 0;
+         Scan       : Cell_Address := 0;
+         Stats      : Statistics;
       end record;
 
    function Valid (This : Instance) return Boolean
