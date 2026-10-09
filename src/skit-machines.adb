@@ -27,7 +27,7 @@ package body Skit.Machines is
      (This : in out Instance'Class;
       From : Internal_Register)
       return Object
-     with Inline_Always;
+     with Inline_Always, Pre => Is_Application (This.Internal (From));
 
    procedure Push
      (This  : in out Instance'Class;
@@ -214,7 +214,8 @@ package body Skit.Machines is
 
       procedure Eval_Suspension;
 
-      procedure Advance_Primitive;
+      procedure Advance_Primitive
+        with Post => not This.Advancing_Primitive;
 
       procedure Call_Primitive
         (Evaluator      : Primitive_Evaluator_Interface'Class);
@@ -509,6 +510,10 @@ package body Skit.Machines is
                   Fn      : Primitive_Evaluator_Interface'Class
                   renames This.Prims (F_Index);
                begin
+                  pragma Assert
+                    (Index in 1 .. Fn.Argument_Count,
+                     "pending primitive call has more arguments than"
+                     & " its primitive takes");
                   case Fn.Argument_Modes (Index) is
                      when Lazy =>
                         --  Lazy: pass the thunk unevaluated, then advance.
@@ -823,6 +828,7 @@ package body Skit.Machines is
    is
       S : Object renames This.Internal (Stack);
    begin
+      pragma Assert (not Stack_Empty (This), "pop from an empty stack");
       return X : constant Object := Skit.Memory.Left (This.Core, S) do
          S := Skit.Memory.Right (This.Core, S);
       end return;
@@ -839,6 +845,9 @@ package body Skit.Machines is
    is
       S : Object renames This.Internal (From);
    begin
+      pragma Assert
+        (Is_Application (S),
+         "pop from an empty " & Internal_Register'Image (From) & " register");
       return X : constant Object := Skit.Memory.Left (This.Core, S) do
          S := Skit.Memory.Right (This.Core, S);
       end return;

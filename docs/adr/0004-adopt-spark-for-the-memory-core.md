@@ -1,8 +1,49 @@
 # ADR 0004: Adopt SPARK for the Memory Core
 
-- **Status:** Proposed — prerequisites landed, proof not yet started (see Status update 2026-07-09)
+- **Status:** Proposed — stage 1 (contracts) landed, proof not yet started (see Status update 2026-10-09)
 - **Date:** 2026-07-07
 - **Deciders:** Fraser Wilson
+
+## Status update (2026-10-09): stage 1
+
+Stage 1 of the staged migration is done (issue #23): the heap invariants are
+written as contracts and run under `-gnata`. No `SPARK_Mode` yet.
+
+- **The invariant.** `Skit.Memory` now exports `Valid` (the semispaces split
+  the core evenly, and `To_Space <= Scan <= Free <= Top`), `Is_Live` (an
+  application allocated in the active space), `Is_Storable` (not an
+  application, or live), and `Heap_Valid` (every live cell holds only storable
+  values). These answer the first Open Question below: the offsets did not
+  need reformulating, only stating.
+- **Where it is checked.** `Initialize`, `Before_GC`, `Mark`, `GC` and
+  `After_GC` carry `Valid`; `After_GC` adds `Heap_Valid`, which replaces the
+  hand-rolled `Check_Heap` behind the old `Heap_Checks` flag (poisoning dead
+  space is still behind a flag, `Poison_Dead_Space`). `Left`, `Right`,
+  `Set_Left`, `Set_Right` and `Append` require live and storable operands, so
+  storing a stale pointer is caught where it happens. `Copy` now states the
+  assumption that the live set fits in one semispace. The `GC` loop has a
+  `Loop_Invariant`.
+- **Inlined accessors.** GNAT does not check a `Pre` on an `Inline_Always`
+  subprogram, so each of those bodies repeats its precondition as a
+  `pragma Assert`. Under proof they become redundant.
+- **Bugs the contracts exposed.** `Initialize` never set `Scan`, and
+  `Initialize` on a one-cell core (`Last = 0`) violated its own
+  `Post => not Is_Full`. Both are fixed or ruled out by a `Pre`.
+- **Root `Skit`.** The band constructors (`Symbol`, `Primitive_Function`,
+  `Foreign_Object`) bound their index, so one can no longer spill into the
+  next band. `To_Object (Integer)` deliberately keeps wrapping, since `Int`
+  arithmetic relies on it; its `Post` states that in-range values round-trip.
+- **`Skit.Machines`** (runtime only): popping an empty register or stack is an
+  assertion failure rather than a silent read of cell 0, `Left`/`Right`
+  require an application, foreign-object operations require a bound slot, and
+  `Advance_Primitive` checks argument indices.
+- **Cost.** About 20% on leander's self-test in the development profile;
+  nothing in release, which compiles without `-gnata`.
+
+Next is stage 2: the statistics fields (`Alloc_Count`, `Reclaimed`, and the
+`Static_*`/`Remembered_*` counters left from the rejected ADR 0008) become
+ghost or move out. `Alloc_Count` and `Reclaimed` also overflow `Natural` on a
+long enough run.
 
 ## Status update (2026-07-09)
 
