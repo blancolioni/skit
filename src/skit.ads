@@ -128,6 +128,10 @@ private
    type Object_Payload is mod 2 ** Payload_Size;
    subtype Cell_Address is Object_Payload;
 
+   type Counter is mod 2 ** 64;
+   --  For statistics only. Being modular, a counter cannot overflow and
+   --  raise on a long run, and proof never has to bound it.
+
    type Object_Tag is
      (Integer_Object,
       Primitive_Object,

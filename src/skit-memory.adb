@@ -60,9 +60,9 @@ package body Skit.Memory is
 
    procedure After_GC (This : in out Instance) is
    begin
-      This.Reclaimed := This.Reclaimed
-        + (Natural (This.Top) - Natural (This.Free));
-      This.Static_Top := This.Free;
+      This.Stats.Reclaimed :=
+        This.Stats.Reclaimed + Counter (This.Top - This.Free);
+      This.Stats.Static_Top := This.Free;
       if Poison_Dead_Space then
          --  The from-space is dead; poison it so any surviving stale pointer
          --  into it is caught rather than followed.
@@ -87,7 +87,7 @@ package body Skit.Memory is
          and then Is_Storable (This, Right));
       This.Core (This.Free) := (Left, Right);
       This.Free := @ + 1;
-      This.Alloc_Count := @ + 1;
+      This.Stats.Alloc_Count := @ + 1;
       return Application (This.Free - 1);
    end Append;
 
@@ -98,13 +98,13 @@ package body Skit.Memory is
    procedure Before_GC (This : in out Instance) is
    begin
       Flip (This);
-      if This.Epoch_Remembered > This.Max_Remembered then
-         This.Max_Remembered := This.Epoch_Remembered;
+      if This.Stats.Epoch_Remembered > This.Stats.Max_Remembered then
+         This.Stats.Max_Remembered := This.Stats.Epoch_Remembered;
       end if;
-      This.Epoch_Remembered := 0;
-      This.Copied := 0;
-      This.Static_Copied := 0;
-      This.Transient_Copied := 0;
+      This.Stats.Epoch_Remembered := 0;
+      This.Stats.Copied := 0;
+      This.Stats.Static_Copied := 0;
+      This.Stats.Transient_Copied := 0;
    end Before_GC;
 
    ----------
@@ -248,11 +248,11 @@ package body Skit.Memory is
          Cell    : Cell_Type renames This.Core (Address);
       begin
          if not In_To_Space (This, Cell.Left) then
-            This.Copied := This.Copied + 1;
-            if Address < This.Static_Top then
-               This.Static_Copied := @ + 1;
+            This.Stats.Copied := @ + 1;
+            if Address < This.Stats.Static_Top then
+               This.Stats.Static_Copied := @ + 1;
             else
-               This.Transient_Copied := @ + 1;
+               This.Stats.Transient_Copied := @ + 1;
             end if;
             Cell.Left := Application (Copy (This, Address));
          end if;
@@ -298,12 +298,12 @@ package body Skit.Memory is
    is
    begin
       pragma Assert (Is_Live (This, App) and then Is_Storable (This, To));
-      if Payload (App) < This.Static_Top
+      if Payload (App) < This.Stats.Static_Top
         and then Is_Application (To)
-        and then Payload (To) >= This.Static_Top
+        and then Payload (To) >= This.Stats.Static_Top
       then
-         This.Remembered_Writes := @ + 1;
-         This.Epoch_Remembered  := @ + 1;
+         This.Stats.Remembered_Writes := @ + 1;
+         This.Stats.Epoch_Remembered  := @ + 1;
       end if;
       This.Core (Payload (App)).Left := To;
    end Set_Left;
@@ -319,12 +319,12 @@ package body Skit.Memory is
    is
    begin
       pragma Assert (Is_Live (This, App) and then Is_Storable (This, To));
-      if Payload (App) < This.Static_Top
+      if Payload (App) < This.Stats.Static_Top
         and then Is_Application (To)
-        and then Payload (To) >= This.Static_Top
+        and then Payload (To) >= This.Stats.Static_Top
       then
-         This.Remembered_Writes := @ + 1;
-         This.Epoch_Remembered  := @ + 1;
+         This.Stats.Remembered_Writes := @ + 1;
+         This.Stats.Epoch_Remembered  := @ + 1;
       end if;
       This.Core (Payload (App)).Right := To;
    end Set_Right;

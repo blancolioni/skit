@@ -11,7 +11,7 @@ begin
       & "ms");
    Ada.Text_IO.Put_Line
      ("GC:"
-      & Natural'Image (This.GC_Count)
+      & This.GC_Count'Image
       & " @"
       & Natural'Image (Natural (This.GC_Time * 1000.0))
       & "ms");

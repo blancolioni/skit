@@ -1,8 +1,33 @@
 # ADR 0004: Adopt SPARK for the Memory Core
 
-- **Status:** Proposed — stage 1 (contracts) landed, proof not yet started (see Status update 2026-10-09)
+- **Status:** Proposed — stages 1 (contracts) and 2 (statistics) landed, proof not yet started (see Status updates 2026-10-09)
 - **Date:** 2026-07-07
 - **Deciders:** Fraser Wilson
+
+## Status update (2026-10-09): stage 2
+
+The couplings stage 2 was to lift are all gone. The access `Reference` and the
+root container went with ADR 0005; what remained was statistics.
+
+- **Statistics moved out of the collector's state.** Every counter
+  `Skit.Memory` keeps for `Report` now lives in a separate `Statistics` record
+  (the `Stats` component of `Instance`), next to the six offsets the collector
+  actually depends on. `Static_Top`, used only to classify copies and writes for
+  the ADR 0008 instrumentation, moved with them.
+- **Counters cannot overflow.** They are a new modular `Counter` type
+  (`mod 2 ** 64`, in root `Skit`). As `Natural`, `Alloc_Count` (incremented on
+  every `Append`) and `Reclaimed` would have raised `Constraint_Error` on a long
+  enough run; a modular counter wraps instead, and proof has nothing to bound.
+  `Skit.Machines.GC_Count` uses the same type.
+- **Why not ghost.** Ghost state can only be read by ghost code, and ghost code
+  cannot perform output, so `Report` could no longer print the figures. A
+  separate record of modular counters costs the proof nothing and keeps
+  `Report` working. If `Report` is ever dropped, the record can become ghost.
+- **Dead fields removed.** `Skit.Machines` had `Active_Cells` and
+  `Max_Active_Cells` (never used) and an `Alloc_Count` that was only ever
+  incremented, duplicating `Skit.Memory`'s own count.
+
+Next is stage 3: add `gnatprove` and turn on `SPARK_Mode` for root `Skit`.
 
 ## Status update (2026-10-09): stage 1
 
