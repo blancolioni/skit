@@ -110,8 +110,26 @@ package body Skit.Handles.Images is
    --  Little-endian readers over a byte array with a moving cursor
    ----------------------------------------------------------------------------
 
+   --  An image is external data. Its checksum catches accidental damage, but
+   --  an image can have a correct checksum and a wrong structure (a writer
+   --  bug, a format mismatch, a crafted file), so every offset, count and
+   --  index read from it is checked before use, and a bad one raises
+   --  Image_Error -- never Constraint_Error from somewhere deeper.
+
+   procedure Need (D : Byte_Array; C : Offset; Count : Offset);
+   --  Raise Image_Error unless D holds Count bytes from C onward.
+
+   procedure Need (D : Byte_Array; C : Offset; Count : Offset) is
+   begin
+      if C < D'First or else C > D'Last + 1 or else Count > D'Last + 1 - C
+      then
+         raise Image_Error with "image truncated";
+      end if;
+   end Need;
+
    function Get_U8 (D : Byte_Array; C : in out Offset) return Unsigned_8 is
    begin
+      Need (D, C, 1);
       return R : constant Unsigned_8 := Unsigned_8 (D (C)) do
          C := C + 1;
       end return;
@@ -120,6 +138,7 @@ package body Skit.Handles.Images is
    function Get_U16 (D : Byte_Array; C : in out Offset) return Unsigned_16 is
       R : Unsigned_16 := 0;
    begin
+      Need (D, C, 2);
       for I in 0 .. 1 loop
          R := R or Shift_Left (Unsigned_16 (D (C + Offset (I))), I * 8);
       end loop;
@@ -130,6 +149,7 @@ package body Skit.Handles.Images is
    function Get_U32 (D : Byte_Array; C : in out Offset) return Unsigned_32 is
       R : Unsigned_32 := 0;
    begin
+      Need (D, C, 4);
       for I in 0 .. 3 loop
          R := R or Shift_Left (Unsigned_32 (D (C + Offset (I))), I * 8);
       end loop;
@@ -140,6 +160,7 @@ package body Skit.Handles.Images is
    function Get_U64 (D : Byte_Array; C : in out Offset) return Unsigned_64 is
       R : Unsigned_64 := 0;
    begin
+      Need (D, C, 8);
       for I in 0 .. 7 loop
          R := R or Shift_Left (Unsigned_64 (D (C + Offset (I))), I * 8);
       end loop;
@@ -157,6 +178,94 @@ package body Skit.Handles.Images is
       return U64_To_LF (Get_U64 (D, C));
    end Get_F64;
 
+   function Get_Count
+     (D        : Byte_Array;
+      C        : in out Offset;
+      Min_Size : Positive;
+      What     : String)
+      return Natural;
+   --  A u32 count of records that follow, each at least Min_Size bytes. It
+   --  must fit in what is left of the image, so that a bogus count fails
+   --  here rather than after a long loop of allocations.
+
+   function Get_Count
+     (D        : Byte_Array;
+      C        : in out Offset;
+      Min_Size : Positive;
+      What     : String)
+      return Natural
+   is
+      X : constant Unsigned_32 := Get_U32 (D, C);
+   begin
+      if X > Unsigned_32 (Natural'Last)
+        or else Offset (X) * Offset (Min_Size) > D'Last + 1 - C
+      then
+         raise Image_Error with What & " larger than the image";
+      end if;
+      return Natural (X);
+   end Get_Count;
+
+   function Get_Index
+     (D     : Byte_Array;
+      C     : in out Offset;
+      Limit : Natural;
+      What  : String)
+      return Natural;
+   --  A u32 index, which must be below Limit.
+
+   function Get_Index
+     (D     : Byte_Array;
+      C     : in out Offset;
+      Limit : Natural;
+      What  : String)
+      return Natural
+   is
+      X : constant Unsigned_32 := Get_U32 (D, C);
+   begin
+      if X >= Unsigned_32 (Limit) then
+         raise Image_Error with What & " index out of range";
+      end if;
+      return Natural (X);
+   end Get_Index;
+
+   function Get_Section_Offset
+     (D : Byte_Array;
+      C : in out Offset)
+      return Offset;
+   --  A u64 section offset, which must point inside the image.
+
+   function Get_Section_Offset
+     (D : Byte_Array;
+      C : in out Offset)
+      return Offset
+   is
+      X : constant Unsigned_64 := Get_U64 (D, C);
+   begin
+      if X > Unsigned_64 (D'Last) then
+         raise Image_Error with "section offset out of range";
+      end if;
+      return Offset (X);
+   end Get_Section_Offset;
+
+   function Get_Length
+     (D : Byte_Array;
+      C : in out Offset)
+      return Offset;
+   --  A u64 byte-string length, which must fit in what is left of the image.
+
+   function Get_Length
+     (D : Byte_Array;
+      C : in out Offset)
+      return Offset
+   is
+      X : constant Unsigned_64 := Get_U64 (D, C);
+   begin
+      if X > Unsigned_64 (D'Last + 1 - C) then
+         raise Image_Error with "byte string longer than the image";
+      end if;
+      return Offset (X);
+   end Get_Length;
+
    ------------------
    -- Read_Name --
    ------------------
@@ -166,6 +275,7 @@ package body Skit.Handles.Images is
       Len : constant Natural := Natural (Get_U16 (D, C));
       R   : String (1 .. Len);
    begin
+      Need (D, C, Offset (Len));
       for I in R'Range loop
          R (I) := Character'Val (Natural (D (C)));
          C := C + 1;
@@ -214,17 +324,36 @@ package body Skit.Handles.Images is
    begin
       case Kind is
          when Kind_Application =>
-            return A (Natural (Get_U32 (D, C)));
+            return A (Get_Index (D, C, Natural (A.Length), "cell"));
          when Kind_Integer =>
             return To_Object (Get_I32 (D, C));
          when Kind_Float =>
-            return To_Object (Get_F64 (D, C));
+            declare
+               X : constant Long_Float := Get_F64 (D, C);
+            begin
+               if not X'Valid
+                 or else X not in Long_Float (Float'First)
+                                .. Long_Float (Float'Last)
+               then
+                  raise Image_Error with "float out of range";
+               end if;
+               return To_Object (X);
+            end;
          when Kind_Combinator =>
-            return Combinator_From_Payload (Object_Payload (Get_U32 (D, C)));
+            declare
+               X : constant Unsigned_32 := Get_U32 (D, C);
+            begin
+               if X > Unsigned_32 (Object_Payload'Last) then
+                  raise Image_Error with
+                    "unknown combinator payload" & X'Image;
+               end if;
+               return Combinator_From_Payload (Object_Payload (X));
+            end;
          when Kind_Symbol =>
-            return Sym (Natural (Get_U32 (D, C)));
+            return Sym (Get_Index (D, C, Natural (Sym.Length), "symbol"));
          when Kind_Foreign =>
-            return Frn (Natural (Get_U32 (D, C)));
+            return Frn
+              (Get_Index (D, C, Natural (Frn.Length), "foreign object"));
          when others =>
             raise Image_Error with "bad object kind" & Kind'Image;
       end case;
@@ -862,7 +991,7 @@ package body Skit.Handles.Images is
             for J in 1 .. Natural (Sections) loop
                declare
                   Kind : constant Unsigned_16 := Get_U16 (D, C);
-                  Off  : constant Offset := Offset (Get_U64 (D, C));
+                  Off  : constant Offset := Get_Section_Offset (D, C);
                   Len  : constant Unsigned_64 := Get_U64 (D, C);
                begin
                   pragma Unreferenced (Len);
@@ -889,17 +1018,19 @@ package body Skit.Handles.Images is
          if Off_Sym >= 0 then
             declare
                Cursor : Offset := Off_Sym;
-               Count  : constant Natural := Natural (Get_U32 (D, Cursor));
+               Count  : constant Natural :=
+                          Get_Count (D, Cursor, 8, "symbol count");
             begin
                for J in 1 .. Count loop
                   declare
-                     Local_Id : constant Natural :=
-                                  Natural (Get_U32 (D, Cursor));
+                     Local_Id : constant Unsigned_32 := Get_U32 (D, Cursor);
                      Name_Ref : constant Unsigned_32 := Get_U32 (D, Cursor);
                      Name     : constant String :=
                                   Read_Name (D, Off_Pool + Offset (Name_Ref));
                   begin
-                     pragma Assert (Local_Id = Natural (Sym.Length));
+                     if Local_Id /= Unsigned_32 (Sym.Length) then
+                        raise Image_Error with "symbols out of order";
+                     end if;
                      Sym.Append (This.Intern_Symbol (Name));
                   end;
                end loop;
@@ -911,7 +1042,8 @@ package body Skit.Handles.Images is
          --  no collection runs during this build.
          declare
             Cursor : Offset := Off_Cells;
-            N      : constant Natural := Natural (Get_U32 (D, Cursor));
+            N      : constant Natural :=
+                       Get_Count (D, Cursor, 10, "cell count");
          begin
             for J in 1 .. N loop
                M.Cells.Append (This.H.Machine.Append (Skit.I, Skit.I));
@@ -924,7 +1056,8 @@ package body Skit.Handles.Images is
          if Off_Frn >= 0 then
             declare
                Cursor : Offset := Off_Frn;
-               Count  : constant Natural := Natural (Get_U32 (D, Cursor));
+               Count  : constant Natural :=
+                          Get_Count (D, Cursor, 16, "foreign object count");
             begin
                for J in 1 .. Count loop
                   declare
@@ -933,7 +1066,9 @@ package body Skit.Handles.Images is
                                      Read_Name
                                        (D, Off_Pool + Offset (Class_Ref));
                      Child_Count : constant Natural :=
-                                     Natural (Get_U32 (D, Cursor));
+                                     Get_Count
+                                       (D, Cursor, 5,
+                                        "foreign object child count");
                      Children    : Object_Array (1 .. Child_Count);
                   begin
                      for K in Children'Range loop
@@ -941,9 +1076,8 @@ package body Skit.Handles.Images is
                           Get_Object (D, Cursor, M.Cells, Sym, Frn);
                      end loop;
                      declare
-                        Len   : constant Natural :=
-                                  Natural (Get_U64 (D, Cursor));
-                        Bytes : Byte_Array (1 .. Offset (Len));
+                        Len   : constant Offset := Get_Length (D, Cursor);
+                        Bytes : Byte_Array (1 .. Len);
                         Ref   : Foreign_Reference;
                      begin
                         for K in Bytes'Range loop
@@ -985,7 +1119,8 @@ package body Skit.Handles.Images is
          --  the same pass can resolve an import against it.
          declare
             Cursor : Offset := Off_Exp;
-            Count  : constant Natural := Natural (Get_U32 (D, Cursor));
+            Count  : constant Natural :=
+                       Get_Count (D, Cursor, 9, "export count");
          begin
             for J in 1 .. Count loop
                declare
@@ -1007,7 +1142,8 @@ package body Skit.Handles.Images is
          if Off_Ann >= 0 and then Annotation /= null then
             declare
                Cursor : Offset := Off_Ann;
-               Count  : constant Natural := Natural (Get_U32 (D, Cursor));
+               Count  : constant Natural :=
+                          Get_Count (D, Cursor, 12, "annotation count");
             begin
                for J in 1 .. Count loop
                   declare
@@ -1015,9 +1151,8 @@ package body Skit.Handles.Images is
                      Name     : constant String :=
                                   Read_Name
                                     (D, Off_Pool + Offset (Name_Ref));
-                     Len      : constant Natural :=
-                                  Natural (Get_U64 (D, Cursor));
-                     Bytes    : Byte_Array (1 .. Offset (Len));
+                     Len      : constant Offset := Get_Length (D, Cursor);
+                     Bytes    : Byte_Array (1 .. Len);
                   begin
                      for K in Bytes'Range loop
                         Bytes (K) := D (Cursor);
@@ -1053,11 +1188,15 @@ package body Skit.Handles.Images is
       end if;
       declare
          Cursor : Offset := M.Off_Import;
-         Count  : constant Natural := Natural (Get_U32 (D, Cursor));
+         Count  : constant Natural :=
+                    Get_Count (D, Cursor, 9, "import count");
       begin
          for J in 1 .. Count loop
             declare
-               Cell_Index : constant Natural := Natural (Get_U32 (D, Cursor));
+               Cell_Index : constant Natural :=
+                              Get_Index
+                                (D, Cursor, Natural (M.Cells.Length),
+                                 "import cell");
                Side       : constant Unsigned_8 := Get_U8 (D, Cursor);
                Name_Ref   : constant Unsigned_32 := Get_U32 (D, Cursor);
                Name       : constant String :=
@@ -1066,6 +1205,9 @@ package body Skit.Handles.Images is
             begin
                if Value = Undefined then
                   raise Image_Error with "unresolved import: " & Name;
+               end if;
+               if Side > 1 then
+                  raise Image_Error with "bad import slot side";
                end if;
                if Side = 0 then
                   This.H.Machine.Set_Left (M.Cells (Cell_Index), Value);
@@ -1149,7 +1291,7 @@ package body Skit.Handles.Images is
             for J in 1 .. Natural (Sections) loop
                declare
                   Kind : constant Unsigned_16 := Get_U16 (D, C);
-                  Off  : constant Offset := Offset (Get_U64 (D, C));
+                  Off  : constant Offset := Get_Section_Offset (D, C);
                   Len  : constant Unsigned_64 := Get_U64 (D, C);
                begin
                   pragma Unreferenced (Len);

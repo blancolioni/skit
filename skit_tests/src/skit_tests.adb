@@ -103,5 +103,6 @@ begin
    Test_Foreign_Objects;
    Test_Foreign_Nested;
    Test_Images;
+   Test_Malformed_Images;
    Report;
 end Skit_Tests;
