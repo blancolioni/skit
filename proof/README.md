@@ -39,9 +39,9 @@ so it is fast and gives the same answer on any machine. A full proof searches
 afresh and can time out differently from run to run; that is why CI replays.
 
 `.github/workflows/proof.yml` replays the session on every pull request and
-push that touches `skit.ads`/`.adb`, `skit-memory.ads`/`.adb`, `skit.gpr` or
-this directory, and runs a full proof every Monday to catch the session
-drifting from what GNATprove finds by itself.
+push to `main` (it takes about two minutes, so it is not filtered by path,
+and can be a required check), and runs a full proof every Monday to catch the
+session drifting from what GNATprove finds by itself.
 
 When you change the proved units or their contracts:
 

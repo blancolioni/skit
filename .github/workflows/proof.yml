@@ -2,7 +2,8 @@ name: Proof (SPARK)
 
 # Proves root Skit and Skit.Memory with GNATprove (ADR 0004).
 #
-# Pull requests and pushes replay the proof recorded in proof/sessions:
+# Every pull request and push to main replays the proof recorded in
+# proof/sessions (about two minutes, so it is not worth filtering by path):
 # each check is re-run with the prover and step limit that discharged it,
 # so the result does not depend on how fast the runner is. If a change
 # breaks a recorded proof, replay fails; re-prove locally and commit the
@@ -14,24 +15,8 @@ name: Proof (SPARK)
 on:
   pull_request:
     branches: [ "main" ]
-    paths:
-      - "src/skit.ads"
-      - "src/skit.adb"
-      - "src/skit-memory.ads"
-      - "src/skit-memory.adb"
-      - "skit.gpr"
-      - "proof/**"
-      - ".github/workflows/proof.yml"
   push:
     branches: [ "main" ]
-    paths:
-      - "src/skit.ads"
-      - "src/skit.adb"
-      - "src/skit-memory.ads"
-      - "src/skit-memory.adb"
-      - "skit.gpr"
-      - "proof/**"
-      - ".github/workflows/proof.yml"
   schedule:
     - cron: "0 4 * * 1"  # Mondays, 04:00 UTC
   workflow_dispatch:
