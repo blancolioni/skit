@@ -167,6 +167,54 @@ if floats are rare, reconsider option B (heap-boxed floats), whose only failure
 mode is float-heavy loops that a rare-float tower never triggers, keeping the
 cache-tight 32-bit hot path; (2) if float usage is real and hot, commit to C.
 
+## Interaction with the SPARK proof (added 2026-10-10)
+
+Since this ADR was deferred, [ADR 0004](0004-adopt-spark-for-the-memory-core.md)
+has been implemented: root `Skit` and `Skit.Memory` are proved with GNATprove,
+and CI replays the proof on every pull request. That does not change when to
+adopt option C. It does change what adopting it involves. ADR 0004 suggested
+proving against the final representation so that the proof is written once;
+it was proved against the 32-bit word instead, so option C means re-proving
+part of it.
+
+- **The collector's proof should carry over.** `Skit.Memory` sees an `Object`
+  only through `Is_Application`, `Payload`, `Application` and `Cell_Address`.
+  Its invariants (`Valid`, `Collecting`, `Counted` and the counting lemmas)
+  mention nothing else, so if option C keeps that interface, as this ADR
+  already intends, they stay as they are.
+- **Constraint: keep `Cell_Address` a small type of its own**, rather than
+  widening it to the NaN payload. `Valid`'s non-wrapping bounds,
+  `Count_Forwarded` and `Lemma_Room` rely on addresses fitting in `Natural`. A
+  30- or 32-bit cell index fits easily in the payload, so the heap limit need
+  not change.
+- **Root `Skit` is re-proved, and that is where the proof pays.**
+  - Tag predicates and constructors become mask-and-compare expression
+    functions on a private `mod 2**64` word. SMT provers handle that kind of
+    arithmetic well, so they should re-prove much as they did in ADR 0004's
+    stage 3.
+  - The central risk of option C, a genuine float colliding with the boxed
+    space, becomes provable. Nothing can be proved about the bits of an
+    arbitrary `Long_Float` (the conversion is opaque to the prover), but the
+    canonicalisation in `To_Object (Long_Float)` can be written on the integer
+    word: if the exponent is all ones and the mantissa nonzero, store the
+    reserved canonical NaN. A postcondition that the result is a float and no
+    other kind of object then holds for all 2^64 patterns.
+  - `To_Object (Integer)` stops wrapping once integers have at least 32 bits of
+    payload, so its round-trip postcondition becomes unconditional (and Haskell
+    `Int` in leander stops wrapping at 30 bits). The precondition that a
+    `Long_Float` fit in a `Float` goes away. `To_Float` stays outside SPARK:
+    SPARK does not accept a float as the target of an unchecked conversion.
+- **The rule that boxed non-floats are only moved, never used in float
+  arithmetic** is enforced by typing in the proved units, where `Object` is a
+  modular word. In `Skit.Machines`, which is not proved, it stays a coding
+  rule.
+- **When it lands**, CI's proof replay will fail, because the proof obligations
+  change. Re-run the full proof and commit the new session
+  ([proof/README.md](../../proof/README.md)); a check that no longer proves is
+  a real problem with the new representation. The image format records word
+  size and tag layout, so it needs a version bump, and the image reader's
+  representation-specific checks (#30) change with it.
+
 ## Open questions
 
 - ~~Measure the real 2× memory / cache impact on representative workloads before
