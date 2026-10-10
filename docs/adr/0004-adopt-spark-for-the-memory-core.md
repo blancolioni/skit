@@ -1,6 +1,6 @@
 # ADR 0004: Adopt SPARK for the Memory Core
 
-- **Status:** Proposed — stages 1–4 done: root `Skit` and `Skit.Memory` are proved, with no assumptions (see Status updates 2026-10-09 and 2026-10-10)
+- **Status:** Accepted (2026-10-10) — implemented: root `Skit` and `Skit.Memory` are proved, with no assumptions, and CI replays the proof (see the Status updates below)
 - **Date:** 2026-07-07
 - **Deciders:** Fraser Wilson
 
@@ -439,7 +439,9 @@ Each stage keeps the self-test and integration suites green.
 
 ## Consequences
 
-To be recorded once implemented. Expected:
+Implemented (#24–#29). The expectations below held, with one qualification on
+the last, noted after the list. The status updates at the top record the
+details.
 
 - The copying collector carries machine-checked guarantees of in-bounds
   indexing, space discipline, and collection safety — the heap cannot be
@@ -450,3 +452,14 @@ To be recorded once implemented. Expected:
   Terms + I/O unproven by deliberate scope, not by omission.
 - The public interface in [skit.ads](../../src/skit.ads) is unaffected;
   callers see contracts, not a changed surface.
+
+The qualification: no declaration in `skit.ads` changed shape, but two
+contracts got stricter. `Argument_Modes` must return an array indexed
+`1 .. Argument_Count`, and `To_Object (Long_Float)` requires a value that fits
+in a `Float`. Every existing implementation and caller already met both.
+
+Since then, the proof is checked on every pull request:
+`.github/workflows/proof.yml` replays the recorded session (see
+[proof/README.md](../../proof/README.md)). One follow-up from the original
+scope remains: validating untrusted image data in `Skit.Handles.Images`
+(#30).
