@@ -27,49 +27,35 @@ package body Skit.Debug is
            (To_Float (X)'Image, Ada.Strings.Left);
       elsif Is_Application (X) then
          return "("
-           & Ada.Strings.Fixed.Trim (Payload (X)'Image, Ada.Strings.Left)
+           & Ada.Strings.Fixed.Trim (Address (X)'Image, Ada.Strings.Left)
            & ")";
+      elsif Is_Combinator (X) then
+         return (case Combinator_Of (X) is
+                    when Comb_S       => "S",
+                    when Comb_K       => "K",
+                    when Comb_I       => "I",
+                    when Comb_C       => "C",
+                    when Comb_B       => "B",
+                    when Comb_S_Prime => "S'",
+                    when Comb_B_Star  => "B*",
+                    when Comb_C_Prime => "C'",
+                    when Comb_Y       => "Y");
+      elsif X = Nil then
+         return "nil";
+      elsif X = Undefined then
+         return "*undefined*";
+      elsif X = Suspension then
+         return "*suspend*";
+      elsif Is_Symbol (X) then
+         return [Character'Val (Symbol_Index (X) + Character'Pos ('a'))];
+      elsif Is_Primitive_Function (X) then
+         return "<prim"
+           & Natural'Image (Primitive_Function_Index (X)) & ">";
+      elsif Is_Foreign_Object (X) then
+         return "<foreign"
+           & Natural'Image (Foreign_Object_Index (X)) & ">";
       else
-         --  A primitive: combinator, defined function, or symbol variable.
-         case Payload (X) is
-            when Payload_Nil =>
-               return "nil";
-            when Payload_S =>
-               return "S";
-            when Payload_K =>
-               return "K";
-            when Payload_I =>
-               return "I";
-            when Payload_C =>
-               return "C";
-            when Payload_B =>
-               return "B";
-            when Payload_S_Prime =>
-               return "S'";
-            when Payload_B_Star =>
-               return "B*";
-            when Payload_C_Prime =>
-               return "C'";
-            when Payload_Y =>
-               return "Y";
-            when Payload_Undefined =>
-               return "*undefined*";
-            when Payload_Suspension =>
-               return "*suspend*";
-            when Primitive_Variable_Payload =>
-               declare
-                  Ch : constant Character :=
-                         Character'Val
-                           (Symbol_Index (X) + Character'Pos ('a'));
-               begin
-                  return [Ch];
-               end;
-            when others =>
-               return "<"
-                 & Ada.Strings.Fixed.Trim
-                 (Payload (X)'Image, Ada.Strings.Left)
-                 & ">";
-         end case;
+         return "<?>";
       end if;
    end Image;
 
@@ -87,10 +73,10 @@ package body Skit.Debug is
       Vrbs : Variable_Binding_Lists.List;
       Xs   : constant String := "xyzuvwijkabcdefghlmnopqrst";
 
-      package Payload_Sets is
-        new Ada.Containers.Ordered_Sets (Object_Payload);
+      package Address_Sets is
+        new Ada.Containers.Ordered_Sets (Cell_Address);
 
-      Visited_Set : Payload_Sets.Set;
+      Visited_Set : Address_Sets.Set;
 
       function Img (X : Object) return String;
 
@@ -101,10 +87,10 @@ package body Skit.Debug is
       function Img (X : Object) return String is
       begin
          if Is_Application (X) then
-            if Visited_Set.Contains (Payload (X)) then
+            if Visited_Set.Contains (Address (X)) then
                return "[recursive]";
             end if;
-            Visited_Set.Include (Payload (X));
+            Visited_Set.Include (Address (X));
             declare
                Left_Img  : constant String := Img (Left (Core, X));
                Right_Img : constant String := Img (Right (Core, X));

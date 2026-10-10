@@ -238,6 +238,26 @@ private
    function Is_Combinator (X : Object) return Boolean
    is (Is_Primitive (X) and then X.Payload in Combinator_Payload);
 
+   --  The combinators, independently of how the representation encodes
+   --  them: code outside the representation names a combinator by this
+   --  type, never by its payload. (Nil, Undefined and Suspension are
+   --  special objects, compared for equality.) In this representation the
+   --  combinator payloads are Payload_S .. Payload_Y in this same order, so
+   --  both directions are arithmetic.
+
+   type Combinator_Kind is
+     (Comb_S, Comb_K, Comb_I, Comb_C, Comb_B,
+      Comb_S_Prime, Comb_B_Star, Comb_C_Prime, Comb_Y);
+
+   function Combinator_Of (X : Object) return Combinator_Kind
+   is (Combinator_Kind'Val (X.Payload - Payload_S))
+     with Pre => Is_Combinator (X);
+
+   function To_Object (C : Combinator_Kind) return Object
+   is ((Payload_S + Combinator_Kind'Pos (C), Primitive_Object))
+     with Post => Is_Combinator (To_Object'Result)
+                  and then Combinator_Of (To_Object'Result) = C;
+
    function Is_Primitive_Function (X : Object) return Boolean
    is (Is_Primitive (X) and then X.Payload in Primitive_Function_Payload);
 
@@ -248,6 +268,12 @@ private
    is ((Address, Application_Object))
      with Post => Is_Application (Application'Result)
                   and then Payload (Application'Result) = Address;
+
+   function Address (X : Object) return Cell_Address
+   is (X.Payload)
+     with Pre => Is_Application (X);
+   --  The cell an application refers to. Outside the representation, use
+   --  this rather than Payload, which is representation-specific.
 
    --  Each kind of reference below is a base payload plus an index. The
    --  arithmetic is modular, so an index past the end of its band would
