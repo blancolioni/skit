@@ -54,6 +54,11 @@ package Skit.Tests is
    --  Round-trip a module image: write a graph to disk, read it back into a
    --  fresh machine, and check its structure survived relocation.
 
+   procedure Test_Malformed_Images;
+   --  Damage a valid image in ways its checksum cannot catch (the checksum
+   --  is recomputed after each change) and check that reading it raises
+   --  Image_Error, not some other exception.
+
    procedure Report;
 
 private

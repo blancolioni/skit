@@ -1,6 +1,7 @@
 with Ada.Command_Line;
 with Ada.Containers.Doubly_Linked_Lists;
 with Ada.Directories;
+with Ada.Exceptions;
 with Ada.Streams;
 with Ada.Streams.Stream_IO;
 with Ada.Wide_Wide_Text_IO;
@@ -1523,6 +1524,334 @@ package body Skit.Tests is
          Ada.Directories.Delete_File (Path);
       end if;
    end Test_Images;
+
+   ---------------------------
+   -- Test_Malformed_Images --
+   ---------------------------
+
+   procedure Test_Malformed_Images is
+      use type Ada.Streams.Stream_Element;
+      use type Ada.Streams.Stream_Element_Array;
+      use type Ada.Streams.Stream_Element_Offset;
+      use type Interfaces.Unsigned_32;
+      package Img renames Skit.Handles.Images;
+      package SIO renames Ada.Streams.Stream_IO;
+      package T renames Skit.Terms;
+
+      subtype Offset is Ada.Streams.Stream_Element_Offset;
+      subtype Bytes is Ada.Streams.Stream_Element_Array;
+
+      Path : constant String := "test_malformed.skix";
+
+      --  From module-image-format.md: the section directory starts at
+      --  offset 20, after the 18-byte header and the u16 section count, and
+      --  each entry is a u16 kind, a u64 offset and a u64 length.
+      Section_Count_At : constant := 18;
+      Directory_At     : constant := 20;
+      Entry_Size       : constant := 18;
+      Section_Pool     : constant := 0;
+      Section_Cells    : constant := 1;
+      Section_Exports  : constant := 2;
+
+      procedure Check (Name : String; Cond : Boolean);
+
+      function No_Resolve (Name : String) return Object;
+
+      procedure Write_Base_Image;
+      --  Write a small valid image to Path: one export, an application.
+
+      function Load return Bytes;
+      --  The bytes of Path, indexed from 0 like offsets in the image.
+
+      procedure Save (D : in out Bytes);
+      --  Recompute the checksum in D's 6-byte trailer, then write D to Path.
+
+      function Get_U32 (D : Bytes; At_Offset : Offset)
+        return Interfaces.Unsigned_32;
+
+      procedure Put_U32
+        (D         : in out Bytes;
+         At_Offset : Offset;
+         X         : Interfaces.Unsigned_32);
+
+      function Directory_Entry (D : Bytes; Kind : Natural) return Offset;
+      --  Where D's section directory entry for Kind starts.
+
+      function Section (D : Bytes; Kind : Natural) return Offset;
+      --  The offset D's section directory records for Kind.
+
+      procedure Expect_Image_Error (Name : String);
+      --  Read Path. Passes only if that raises Image_Error, and for some
+      --  reason other than the checksum: a checksum failure would mean
+      --  Save got it wrong, and the damage was never looked at.
+
+      -----------
+      -- Check --
+      -----------
+
+      procedure Check (Name : String; Cond : Boolean) is
+      begin
+         Total := @ + 1;
+         Put (Name, 38);
+         Ada.Text_IO.Set_Col (40);
+         if Cond then
+            Pass := @ + 1;
+            Ada.Text_IO.Put_Line ("PASS");
+         else
+            Fail := @ + 1;
+            Ada.Text_IO.Put_Line ("FAIL");
+         end if;
+      end Check;
+
+      ---------------------
+      -- Directory_Entry --
+      ---------------------
+
+      function Directory_Entry (D : Bytes; Kind : Natural) return Offset is
+         Count : constant Natural :=
+                   Natural (D (Section_Count_At))
+                   + 256 * Natural (D (Section_Count_At + 1));
+      begin
+         for J in 0 .. Count - 1 loop
+            declare
+               E : constant Offset := Directory_At + Offset (J) * Entry_Size;
+            begin
+               if Natural (D (E)) + 256 * Natural (D (E + 1)) = Kind then
+                  return E;
+               end if;
+            end;
+         end loop;
+         raise Program_Error with "no section of kind" & Kind'Image;
+      end Directory_Entry;
+
+      ------------------------
+      -- Expect_Image_Error --
+      ------------------------
+
+      procedure Expect_Image_Error (Name : String) is
+         Hr     : constant Skit.Handles.Handle :=
+                    Skit.Handles.New_Handle (Core_Size => 1024);
+         Result : Boolean := False;
+      begin
+         begin
+            Img.Read (Hr, Path);
+            Ada.Text_IO.Put_Line ("  " & Name & ": no exception");
+         exception
+            when E : Img.Image_Error =>
+               Result := Ada.Exceptions.Exception_Message (E)
+                           /= "checksum mismatch";
+               if not Result then
+                  Ada.Text_IO.Put_Line ("  " & Name & ": checksum mismatch");
+               end if;
+            when E : others =>
+               Ada.Text_IO.Put_Line
+                 ("  " & Name & ": raised "
+                  & Ada.Exceptions.Exception_Name (E));
+         end;
+         Check (Name, Result);
+      end Expect_Image_Error;
+
+      -------------
+      -- Get_U32 --
+      -------------
+
+      function Get_U32 (D : Bytes; At_Offset : Offset)
+        return Interfaces.Unsigned_32
+      is
+         R : Interfaces.Unsigned_32 := 0;
+      begin
+         for I in reverse 0 .. 3 loop
+            R := R * 256 + Interfaces.Unsigned_32 (D (At_Offset + Offset (I)));
+         end loop;
+         return R;
+      end Get_U32;
+
+      ----------
+      -- Load --
+      ----------
+
+      function Load return Bytes is
+         F : SIO.File_Type;
+      begin
+         SIO.Open (F, SIO.In_File, Path);
+         declare
+            D    : Bytes (0 .. Offset (SIO.Size (F)) - 1);
+            Last : Offset;
+         begin
+            SIO.Read (F, D, Last);
+            SIO.Close (F);
+            return D;
+         end;
+      end Load;
+
+      ----------------
+      -- No_Resolve --
+      ----------------
+
+      function No_Resolve (Name : String) return Object is
+         pragma Unreferenced (Name);
+      begin
+         return Undefined;
+      end No_Resolve;
+
+      -------------
+      -- Put_U32 --
+      -------------
+
+      procedure Put_U32
+        (D         : in out Bytes;
+         At_Offset : Offset;
+         X         : Interfaces.Unsigned_32)
+      is
+         V : Interfaces.Unsigned_32 := X;
+      begin
+         for I in 0 .. 3 loop
+            D (At_Offset + Offset (I)) :=
+              Ada.Streams.Stream_Element (V mod 256);
+            V := V / 256;
+         end loop;
+      end Put_U32;
+
+      ----------
+      -- Save --
+      ----------
+
+      procedure Save (D : in out Bytes) is
+         Sum : Interfaces.Unsigned_32 := 16#811C_9DC5#;
+         F   : SIO.File_Type;
+      begin
+         for I in D'First .. D'Last - 6 loop
+            Sum := (Sum xor Interfaces.Unsigned_32 (D (I))) * 16#0100_0193#;
+         end loop;
+         Put_U32 (D, D'Last - 3, Sum);
+         SIO.Create (F, SIO.Out_File, Path);
+         SIO.Write (F, D);
+         SIO.Close (F);
+      end Save;
+
+      -------------
+      -- Section --
+      -------------
+
+      function Section (D : Bytes; Kind : Natural) return Offset is
+      begin
+         return Offset (Get_U32 (D, Directory_Entry (D, Kind) + 2));
+      end Section;
+
+      ----------------------
+      -- Write_Base_Image --
+      ----------------------
+
+      procedure Write_Base_Image is
+         Hw   : constant Skit.Handles.Handle :=
+                  Skit.Handles.New_Handle (Core_Size => 1024);
+         Root : constant Object :=
+                  Hw.Install
+                    (Skit.Compiler.Compile
+                       (T.Apply
+                          (T.Apply (T.Combinator (Skit.K), T.Const (42)),
+                           T.Const (99))),
+                     No_Resolve'Access);
+      begin
+         Hw.Bind ("root", Root);
+         Img.Write
+           (Hw, Path,
+            [1 => Ada.Strings.Unbounded.To_Unbounded_String ("root")]);
+      end Write_Base_Image;
+
+   begin
+      --  The control: re-checksummed but otherwise untouched, the image
+      --  loads. Without it, every case below could be passing on a wrong
+      --  checksum.
+      Write_Base_Image;
+      declare
+         D      : Bytes := Load;
+         Hr     : constant Skit.Handles.Handle :=
+                    Skit.Handles.New_Handle (Core_Size => 1024);
+         Loaded : Boolean := True;
+      begin
+         Save (D);
+         begin
+            Img.Read (Hr, Path);
+         exception
+            when others => Loaded := False;
+         end;
+         Check ("malformed: control image still loads", Loaded);
+      end;
+
+      --  Truncated: the header and part of the directory, then the trailer.
+      Write_Base_Image;
+      declare
+         D   : constant Bytes := Load;
+         Cut : Bytes := D (D'First .. D'First + 59) & D (D'Last - 5 .. D'Last);
+      begin
+         Save (Cut);
+      end;
+      Expect_Image_Error ("malformed: truncated image");
+
+      --  A section offset far past the end of the image.
+      Write_Base_Image;
+      declare
+         D : Bytes := Load;
+      begin
+         Put_U32 (D, Directory_Entry (D, Section_Cells) + 2, 16#FFFF_FFF0#);
+         Save (D);
+      end;
+      Expect_Image_Error ("malformed: section offset past the end");
+
+      --  The export's name claims 65535 bytes. Its nameref, the u32 after
+      --  the export count, is an offset into the pool, where the name's u16
+      --  length is.
+      Write_Base_Image;
+      declare
+         D    : Bytes := Load;
+         Name : constant Offset :=
+                  Section (D, Section_Pool)
+                  + Offset (Get_U32 (D, Section (D, Section_Exports) + 4));
+      begin
+         D (Name) := 16#FF#;
+         D (Name + 1) := 16#FF#;
+         Save (D);
+      end;
+      Expect_Image_Error ("malformed: name running past the end");
+
+      --  The export is an application whose cell index is past the cells.
+      --  Exports: a u32 count, then nameref u32, object kind u8, index u32.
+      Write_Base_Image;
+      declare
+         D   : Bytes := Load;
+         Exp : constant Offset := Section (D, Section_Exports);
+      begin
+         Check ("malformed: base export is an application", D (Exp + 8) = 0);
+         Put_U32 (D, Exp + 9, 999);
+         Save (D);
+      end;
+      Expect_Image_Error ("malformed: object index past the cells");
+
+      --  A cell count far larger than the image could hold.
+      Write_Base_Image;
+      declare
+         D : Bytes := Load;
+      begin
+         Put_U32 (D, Section (D, Section_Cells), 16#7FFF_FFF0#);
+         Save (D);
+      end;
+      Expect_Image_Error ("malformed: enormous cell count");
+
+      --  A cell count beyond Natural'Last.
+      Write_Base_Image;
+      declare
+         D : Bytes := Load;
+      begin
+         Put_U32 (D, Section (D, Section_Cells), 16#FFFF_FFFF#);
+         Save (D);
+      end;
+      Expect_Image_Error ("malformed: cell count beyond Natural");
+
+      if Ada.Directories.Exists (Path) then
+         Ada.Directories.Delete_File (Path);
+      end if;
+   end Test_Malformed_Images;
 
    ---------
    -- Var --
