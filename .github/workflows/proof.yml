@@ -1,0 +1,75 @@
+name: Proof (SPARK)
+
+# Proves root Skit and Skit.Memory with GNATprove (ADR 0004).
+#
+# Every pull request and push to main replays the proof recorded in
+# proof/sessions (about two minutes, so it is not worth filtering by path):
+# each check is re-run with the prover and step limit that discharged it,
+# so the result does not depend on how fast the runner is. If a change
+# breaks a recorded proof, replay fails; re-prove locally and commit the
+# updated session (proof/README.md says how).
+#
+# Once a week the proof is also run from scratch, to catch the recorded
+# session drifting from what GNATprove can find by itself.
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  push:
+    branches: [ "main" ]
+  schedule:
+    - cron: "0 4 * * 1"  # Mondays, 04:00 UTC
+  workflow_dispatch:
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up alire
+      uses: alire-project/setup-alire@v2
+      with:
+        version: 2.1.0
+        toolchain: gnat_native^15 gprbuild
+
+    - name: Cache GNATprove
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/alire
+          ~/.local/share/alire
+        key: alire-gnatprove-${{ runner.os }}-${{ hashFiles('proof/alire.toml') }}
+
+    # The proof crate is never built; this fetches GNATprove and generates
+    # skit's config/skit_config.gpr, which skit.gpr needs.
+    - name: Prepare
+      working-directory: proof
+      run: alr -n build --stop-after=generation
+
+    - name: Replay the recorded proof
+      if: github.event_name != 'schedule'
+      working-directory: proof
+      run: >
+        alr -n exec -- gnatprove -P ../skit.gpr --mode=all --replay
+        -j0 --counterexamples=off --checks-as-errors=on
+        -u skit.ads skit-memory.ads
+
+    - name: Prove from scratch
+      if: github.event_name == 'schedule'
+      working-directory: proof
+      run: >
+        alr -n exec -- gnatprove -P ../skit.gpr --mode=all --level=4
+        -j0 --counterexamples=off --checks-as-errors=on
+        -u skit.ads skit-memory.ads
+
+    - name: Upload the proof report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: gnatprove-report
+        path: obj/development/gnatprove/gnatprove.out
+        if-no-files-found: ignore

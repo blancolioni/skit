@@ -26,4 +26,11 @@ project Skit is
       for Artifacts (".") use ("share");
    end Install;
 
+   --  Where GNATprove records how each check was proved, so that CI can
+   --  replay those proofs instead of searching for them again. See
+   --  proof/README.md.
+   package Prove is
+      for Proof_Dir use "proof";
+   end Prove;
+
 end Skit;

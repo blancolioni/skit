@@ -17,12 +17,44 @@ alr exec -- gnatprove -P ../skit.gpr --mode=flow -u skit.ads
 # Full proof of root Skit
 alr exec -- gnatprove -P ../skit.gpr --mode=all --level=2 -u skit.ads
 
-# Full proof of the collector (needs level 4; about ten minutes)
-alr exec -- gnatprove -P ../skit.gpr --mode=all --level=4 -j0 --counterexamples=off -u skit-memory.ads
+# Full proof of both units from scratch, recording the session
+alr exec -- gnatprove -P ../skit.gpr --mode=all --level=4 -j0 --counterexamples=off --checks-as-errors=on -u skit.ads skit-memory.ads
+
+# Replay the recorded session, as CI does
+alr exec -- gnatprove -P ../skit.gpr --mode=all --replay -j0 --counterexamples=off --checks-as-errors=on -u skit.ads skit-memory.ads
 ```
 
 The first run downloads GNATprove. Results go to
-`../obj/development/gnatprove/gnatprove.out`.
+`../obj/development/gnatprove/gnatprove.out`. With `--checks-as-errors=on`
+an unproved check makes gnatprove exit non-zero. On a 16-core machine the full
+proof takes about a minute and a half and a replay about one minute; a 4-core
+CI runner takes a few times longer.
+
+## The recorded session, and CI
+
+`proof/sessions` records, for every check, which prover discharged it and with
+how many steps (`skit.gpr`'s `Prove` package points GNATprove there). A replay
+re-runs exactly that, with the recorded step limit rather than a time limit,
+so it is fast and gives the same answer on any machine. A full proof searches
+afresh and can time out differently from run to run; that is why CI replays.
+
+`.github/workflows/proof.yml` replays the session on every pull request and
+push to `main` (it takes about two minutes, so it is not filtered by path,
+and can be a required check), and runs a full proof every Monday to catch the
+session drifting from what GNATprove finds by itself.
+
+When you change the proved units or their contracts:
+
+1. Run the full proof above. It updates `proof/sessions` in place.
+2. Replay it, starting from a clean slate, to check it stands on its own:
+   delete `../obj/development/gnatprove` and run the replay command.
+3. Commit the changed session files with the code.
+
+A replay rewrites the session files too, even when it succeeds (leaving
+`.bak` copies, which are ignored). After a successful replay the content is
+unchanged, apart from line endings on Windows, which git normalises. After a
+failed replay the entries it could not prove are rewritten as failures, so
+run the full proof again before committing anything in `proof/sessions`.
 
 ## What is proved
 
