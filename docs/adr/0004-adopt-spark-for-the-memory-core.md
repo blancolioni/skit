@@ -1,8 +1,50 @@
 # ADR 0004: Adopt SPARK for the Memory Core
 
-- **Status:** Proposed — stages 1–3 landed: root `Skit` is proved; `Skit.Memory` has contracts but no proof yet (see Status updates 2026-10-09)
+- **Status:** Proposed — stages 1–4 done: root `Skit` and `Skit.Memory` are proved, with one documented assumption (see Status updates 2026-10-09 and 2026-10-10)
 - **Date:** 2026-07-07
 - **Deciders:** Fraser Wilson
+
+## Status update (2026-10-10): stage 4
+
+`Skit.Memory` is under `SPARK_Mode`, spec and body, and proves at
+`--level=4`: 162 checks across `Skit` and `Skit.Memory`, every one proved
+except root `Skit`'s justified `Argument_Modes` feasibility, and a single
+`pragma Assume` in `Skit.Memory`. All four properties below are discharged.
+
+- **Property 3 needed a model of the collection in flight.** `Collecting` is
+  the invariant from `Before_GC` to `After_GC`: an old-heap cell holds old-heap
+  values, except that its `Left` may be a forwarding pointer to its live copy;
+  a to-space cell below `Scan` holds only live values; one at or above `Scan`
+  holds old-heap values. When `Scan` reaches `Free` that is `Heap_Valid`. This
+  answers the reachability Open Question below: no ghost model of the cell
+  graph was needed, only of which region a pointer lies in. It did need one new
+  field, `From_Free`, recording where the old heap ends, which `Flip` used to
+  discard.
+- **The assumption.** That the live set fits in one semispace (`Free < Top`
+  before each `Copy`). It holds because each old-heap cell is copied at most
+  once, but proving it needs a ghost count of forwarded cells and induction
+  lemmas. It is a `pragma Assume` in `Move`, documented in
+  [proof/README.md](../../proof/README.md).
+- **SPARK-imposed changes.** `Copy` and `Move` became procedures (SPARK does
+  not allow a function with an `in out` parameter); `Append` stays a function,
+  marked `Side_Effects`, because the unproved `Skit.Machines` uses it in
+  expressions. `Is_Full`, and new ghost `Cell_Left`/`Cell_Right`, are
+  expression functions so proof sees their definitions. The GC loop no longer
+  renames a cell across calls that update the heap (an alias SPARK rejects).
+- **Run-time checking.** `Collecting` walks both spaces, so the collection
+  protocol's contracts, and those of `Copy`, `Move` and `Flip`, are proof-only
+  under a local `Assertion_Policy`; GNATprove analyses them regardless. Their
+  cheap halves are body assertions instead: a root must be unmoved entering
+  `Mark` (catching stale roots, which stage 1 caught only on the way out) and
+  storable leaving it, and `After_GC` asserts `Heap_Valid`. The self-test is
+  now about as fast as it was before stage 1 added any contracts.
+- **What the proof assumes of its callers.** The collector is proved given the
+  protocol: `Skit.Machines`, which is not proved, must call `Before_GC`, `Mark`
+  on every root, `GC` and `After_GC` in order, with valid roots. The run-time
+  assertions above check the part of that which is cheap to check.
+
+Stage 5 (record the boundary) is
+[proof/README.md](../../proof/README.md), kept with the proof crate.
 
 ## Status update (2026-10-09): stage 3
 

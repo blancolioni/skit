@@ -1,4 +1,6 @@
-package body Skit.Memory is
+package body Skit.Memory
+  with SPARK_Mode
+is
 
    --  Compile-time gate for poisoning the dead from-space after each
    --  collection. When False (the default), the constant folds and the
@@ -14,7 +16,8 @@ package body Skit.Memory is
    --  returning plausible-looking garbage.
    Invalid : constant Object := Application (Object_Payload'Last);
 
-   procedure Poison_From_Space (This : in out Instance);
+   procedure Poison_From_Space (This : in out Instance)
+     with Pre => Valid (This);
 
    function In_From_Space
      (This   : Instance;
@@ -32,27 +35,69 @@ package body Skit.Memory is
        and then Payload (Item) in
          This.To_Space .. This.To_Space + This.Space_Size - 1);
 
-   function Copy
-     (This    : in out Instance;
-      Address : Cell_Address)
-      return Cell_Address
-     with Pre  => This.Free < This.Top
-                  and then In_From_Space (This, Application (Address)),
-          Post => Copy'Result = This.Free'Old
-                  and then This.Free = This.Free'Old + 1;
-   --  The live set has to fit in one semispace; the Pre is where that
-   --  assumption is finally stated.
+   function Same_Layout
+     (This       : Instance;
+      Top        : Cell_Address;
+      To_Space   : Cell_Address;
+      From_Space : Cell_Address)
+      return Boolean
+   is (This.Top = Top
+       and then This.To_Space = To_Space
+       and then This.From_Space = From_Space)
+     with Ghost;
+   --  The semispaces have not moved. Stating it lets a prover rebuild
+   --  Valid by equalities after Copy and Move, instead of from scratch.
 
-   function Move
-     (This : in out Instance;
-      Item : Object)
-      return Object;
+   --  Copy and Move maintain Collecting, which walks both spaces: checked
+   --  on every call it would make a collection quadratic. Flip's Post
+   --  takes a copy of the whole core with 'Old. As for the collection
+   --  protocol in the spec, these contracts are for proof only.
+   pragma Assertion_Policy (Pre => Ignore, Post => Ignore);
 
    procedure Flip (This : in out Instance)
-     with Post => This.To_Space = This.From_Space'Old
+     with Pre  => Valid (This),
+          Post => Valid (This)
+                  and then This.To_Space = This.From_Space'Old
                   and then This.From_Space = This.To_Space'Old
+                  and then This.From_Free = This.Free'Old
                   and then This.Free = This.To_Space
-                  and then This.Scan = This.To_Space;
+                  and then This.Scan = This.To_Space
+                  and then This.Core = This.Core'Old;
+
+   procedure Copy
+     (This        : in out Instance;
+      Address     : Cell_Address;
+      New_Address : out Cell_Address)
+     with Pre  => Collecting (This)
+                  and then This.Free < This.Top
+                  and then In_Old_Heap (This, Application (Address))
+                  and then Is_Unmoved (This, This.Core (Address).Left),
+          Post => Same_Layout (This, This.Top'Old, This.To_Space'Old,
+                               This.From_Space'Old)
+                  and then Collecting (This)
+                  and then New_Address = This.Free'Old
+                  and then This.Free = This.Free'Old + 1
+                  and then This.Scan = This.Scan'Old
+                  and then This.From_Free = This.From_Free'Old
+                  and then This.Core
+                             = (This.Core'Old with delta
+                                  New_Address => This.Core'Old (Address));
+   --  Copy an old-heap cell that has not been copied yet to the end of
+   --  to-space. The live set has to fit in one semispace; see Move.
+
+   procedure Move
+     (This : in out Instance;
+      Item : in out Object)
+     with Pre  => Collecting (This) and then Is_Unmoved (This, Item),
+          Post => Same_Layout (This, This.Top'Old, This.To_Space'Old,
+                               This.From_Space'Old)
+                  and then Collecting (This)
+                  and then Is_Storable (This, Item)
+                  and then This.Scan = This.Scan'Old
+                  and then This.Free >= This.Free'Old
+                  and then This.From_Free = This.From_Free'Old;
+   --  If Item is in the old heap, replace it by its to-space copy, copying
+   --  its cell first if that has not happened yet.
 
    --------------
    -- After_GC --
@@ -63,11 +108,21 @@ package body Skit.Memory is
       This.Stats.Reclaimed :=
         This.Stats.Reclaimed + Counter (This.Top - This.Free);
       This.Stats.Static_Top := This.Free;
+      pragma Warnings
+        (GNATprove, Off, "statement has no effect",
+         Reason => "Poison_Dead_Space is a debugging switch, off by default");
+      pragma Warnings
+        (GNATprove, Off, "this statement is never reached",
+         Reason => "Poison_Dead_Space is a debugging switch, off by default");
       if Poison_Dead_Space then
          --  The from-space is dead; poison it so any surviving stale pointer
          --  into it is caught rather than followed.
          Poison_From_Space (This);
       end if;
+      pragma Warnings (GNATprove, On, "statement has no effect");
+      pragma Warnings (GNATprove, On, "this statement is never reached");
+      --  The run-time half of the Post: proof has it from Collecting.
+      pragma Assert (Heap_Valid (This));
    end After_GC;
 
    ------------
@@ -97,6 +152,7 @@ package body Skit.Memory is
 
    procedure Before_GC (This : in out Instance) is
    begin
+      pragma Assert (Valid (This));
       Flip (This);
       if This.Stats.Epoch_Remembered > This.Stats.Max_Remembered then
          This.Stats.Max_Remembered := This.Stats.Epoch_Remembered;
@@ -111,16 +167,15 @@ package body Skit.Memory is
    -- Copy --
    ----------
 
-   function Copy
-     (This    : in out Instance;
-      Address : Cell_Address)
-      return Cell_Address
+   procedure Copy
+     (This        : in out Instance;
+      Address     : Cell_Address;
+      New_Address : out Cell_Address)
    is
    begin
-      return Result : constant Cell_Address := This.Free do
-         This.Core (This.Free) := This.Core (Address);
-         This.Free := This.Free + 1;
-      end return;
+      New_Address := This.Free;
+      This.Core (This.Free) := This.Core (Address);
+      This.Free := This.Free + 1;
    end Copy;
 
    ----------
@@ -130,6 +185,7 @@ package body Skit.Memory is
    procedure Flip (This : in out Instance) is
       Original_To_Space : constant Cell_Address := This.To_Space;
    begin
+      This.From_Free := This.Free;
       This.To_Space := This.From_Space;
       This.From_Space := Original_To_Space;
       This.Top := This.To_Space + This.Space_Size;
@@ -142,16 +198,30 @@ package body Skit.Memory is
    --------
 
    procedure GC (This : in out Instance) is
+      --  Collecting walks both spaces; checked on every iteration it would
+      --  make the loop quadratic. For proof only.
+      pragma Assertion_Policy (Loop_Invariant => Ignore);
    begin
       while This.Scan < This.Free loop
          pragma Loop_Invariant
-           (Valid (This) and then This.Scan < This.Free);
+           (Collecting (This) and then This.Scan < This.Free);
          declare
-            Cell      : Cell_Type renames This.Core (This.Scan);
-            New_Left  : constant Object := Move (This, Cell.Left);
-            New_Right : constant Object := Move (This, Cell.Right);
+            --  Copies, not a renaming of the cell: Move updates This, and
+            --  a name for part of This held across that would alias it.
+            Left  : Object := This.Core (This.Scan).Left;
+            Right : Object := This.Core (This.Scan).Right;
          begin
-            Cell := (New_Left, New_Right);
+            Move (This, Left);
+            Move (This, Right);
+            --  Scan is in to-space and the old heap is in from-space, so
+            --  the write below leaves every old-heap cell as it was.
+            pragma Assert
+              (This.Scan >= This.To_Space and then This.Scan < This.Top);
+            pragma Assert
+              (if This.To_Space = 0
+               then This.Scan < This.From_Space
+               else This.Scan >= This.From_Free);
+            This.Core (This.Scan) := (Left, Right);
             This.Scan := @ + 1;
          end;
       end loop;
@@ -189,19 +259,23 @@ package body Skit.Memory is
       This.To_Space   := To_Space;
       This.Space_Size := Space_Size;
       This.Scan       := To_Space;
+      This.From_Free  := From_Space;
+      --  Steps for the prover: halving cannot overflow, and two halves
+      --  never exceed the whole; then Valid, conjunct by conjunct.
+      pragma Assert (Natural (Space_Size) >= 1);
+      pragma Assert
+        (Natural (Space_Size) + Natural (Space_Size)
+           <= Natural (This.Last) + 1);
+      pragma Assert (This.Top = This.To_Space + This.Space_Size);
+      pragma Assert (Natural (This.Top) <= Natural (This.Last) + 1);
+      pragma Assert
+        (Natural (This.From_Space) + Natural (This.Space_Size)
+           <= Natural (This.Last) + 1);
+      pragma Assert
+        (This.From_Space <= This.From_Free
+         and then Natural (This.From_Free)
+                    <= Natural (This.From_Space) + Natural (This.Space_Size));
    end Initialize;
-
-   -------------
-   -- Is_Full --
-   -------------
-
-   function Is_Full
-     (This : Instance)
-      return Boolean
-   is
-   begin
-      return This.Free = This.Top;
-   end Is_Full;
 
    ----------
    -- Left --
@@ -226,37 +300,68 @@ package body Skit.Memory is
       Root : in out Object)
    is
    begin
-      Root := Move (This, Root);
+      pragma Assert (Is_Unmoved (This, Root), "stale root");
+      Move (This, Root);
+      pragma Assert (Is_Storable (This, Root));
    end Mark;
 
    ----------
    -- Move --
    ----------
 
-   function Move
+   procedure Move
      (This : in out Instance;
-      Item : Object)
-      return Object
+      Item : in out Object)
    is
    begin
       if not In_From_Space (This, Item) then
-         return Item;
+         --  The old heap lies inside from-space, so an unmoved value
+         --  outside from-space is not an application at all.
+         pragma Assert (not Is_Application (Item));
+         return;
       end if;
 
       declare
-         Address : constant Cell_Address := Payload (Item);
-         Cell    : Cell_Type renames This.Core (Address);
+         Address     : constant Cell_Address := Payload (Item);
+         New_Address : Cell_Address;
       begin
-         if not In_To_Space (This, Cell.Left) then
+         --  A from-space cell whose Left points into to-space has already
+         --  been copied, and its Left is the forwarding address.
+         if not In_To_Space (This, This.Core (Address).Left) then
             This.Stats.Copied := @ + 1;
             if Address < This.Stats.Static_Top then
                This.Stats.Static_Copied := @ + 1;
             else
                This.Stats.Transient_Copied := @ + 1;
             end if;
-            Cell.Left := Application (Copy (This, Address));
+            --  Each from-space cell is copied at most once (it is marked
+            --  as forwarded straight after), and from-space holds
+            --  Space_Size cells, so copying never runs past Top. Proving
+            --  that needs a count of forwarded cells; until then it is an
+            --  assumption, recorded in proof/README.md.
+            pragma Assume
+              (This.Free < This.Top,
+               "a collection copies each from-space cell at most once");
+            Copy (This, Address, New_Address);
+            --  Address is in the old heap, inside from-space, so the write
+            --  below leaves every to-space cell as it was.
+            pragma Assert
+              (Address < This.To_Space or else Address >= This.Top);
+            This.Core (Address).Left := Application (New_Address);
+            pragma Assert (Valid (This));
+            pragma Assert (Is_Live (This, This.Core (Address).Left));
+         else
+            --  Forwarded already: by Collecting the Left of an old-heap
+            --  cell is unmoved or live, and an unmoved value is never in
+            --  to-space, so it is live.
+            pragma Assert (In_Old_Heap (This, Item));
+            pragma Assert
+              (Is_Unmoved (This, This.Core (Address).Left)
+               or else Is_Live (This, This.Core (Address).Left));
+            pragma Assert (not In_Old_Heap (This, This.Core (Address).Left));
+            pragma Assert (Is_Live (This, This.Core (Address).Left));
          end if;
-         return Cell.Left;
+         Item := This.Core (Address).Left;
       end;
    end Move;
 
