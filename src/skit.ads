@@ -1,6 +1,8 @@
 with Ada.Streams;
 
-package Skit is
+package Skit
+  with SPARK_Mode
+is
 
    Word_Size    : constant := 32;
    Tag_Size     : constant := 2;
@@ -23,8 +25,13 @@ package Skit is
    --  An integer outside Min_Integer .. Max_Integer wraps to the payload
    --  width, as Int arithmetic does; inside it, the value round-trips.
 
-   function To_Object (X : Float) return Object;
-   function To_Object (X : Long_Float) return Object;
+   function To_Object (X : Float) return Object
+     with Post => Is_Float (To_Object'Result);
+
+   function To_Object (X : Long_Float) return Object
+     with Pre  => X in Long_Float (Float'First) .. Long_Float (Float'Last),
+          Post => Is_Float (To_Object'Result);
+   --  A float object holds a Float, so a Long_Float has to fit in one.
 
    function Is_Float (X : Object) return Boolean;
    function To_Float (X : Object) return Long_Float
@@ -58,7 +65,15 @@ package Skit is
      (This : Primitive_Evaluator_Interface)
       return Argument_Mode_Array
       is abstract
-     with Post'Class => Argument_Modes'Result'Length = This.Argument_Count;
+     with Post'Class => Argument_Modes'Result'First = 1
+                        and then Argument_Modes'Result'Last
+                                   = This.Argument_Count;
+   --  One mode per argument, indexed from 1 like the arguments themselves.
+   pragma Annotate
+     (GNATprove, False_Positive,
+      "contract of function might not be feasible",
+      "an array 1 .. N exists for every Natural N; the prover cannot see"
+      & " that through the dispatching call to Argument_Count");
 
    function Evaluate
      (This      : Primitive_Evaluator_Interface;
@@ -192,6 +207,13 @@ private
 
    function Is_Integer (X : Object) return Boolean
    is (X.Tag = Integer_Object);
+
+   --  An expression function, so that its definition is what proof sees:
+   --  the payload is a two's complement Payload_Size-bit integer.
+   function To_Integer (X : Object) return Integer
+   is (if X.Payload < 2 ** (Payload_Size - 1)
+       then Integer (X.Payload)
+       else Integer (X.Payload) - 2 ** Payload_Size);
 
    function Is_Float (X : Object) return Boolean
    is (X.Tag = Float_Object);

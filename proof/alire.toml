@@ -1,0 +1,24 @@
+name = "skit_proof"
+description = "Runs GNATprove over skit (ADR 0004)"
+version = "0.1.0-dev"
+
+authors = ["Fraser Wilson"]
+maintainers = ["Fraser Wilson <fraser@thewhitelion.eu>"]
+maintainers-logins = ["blancolioni"]
+licenses = "GPL-3.0-or-later"
+website = ""
+tags = ["spark", "proof"]
+
+# Not built: this crate exists so that gnatprove is a dependency of proof
+# runs only, not of every crate that uses skit. See README.md.
+project-files = []
+
+[[depends-on]]
+skit = "*"
+gnatprove = "^15.1.0"
+
+[[pins]]
+skit = { path = ".." }
+
+[build-profiles]
+"*" = "development"
