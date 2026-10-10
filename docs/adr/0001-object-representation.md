@@ -86,6 +86,39 @@ with the box space.
   including compiler-side literal codegen, and `-gnatVa` validity checks lose
   meaning on a raw modular type.
 
+### D. Choose A or C at build time (added 2026-10-10)
+
+Keep both the 32-bit word and the NaN-boxed word, and let the embedding
+project choose. An Alire crate-configuration variable
+(`Object_Representation`, `Tagged_32` by default or `NaN_Boxed_64`) reaches
+`skit.gpr` through the generated config, which picks a source directory holding
+that representation; `Object` is completed in `skit.ads`'s private part as a
+type derived from it. A project chooses with one line in its own
+`alire.toml`.
+
+- Pro: it fits this ADR's dilemma directly. A float-heavy embedding gets IEEE
+  doubles, and everything else keeps the cache-tight 32-bit hot path; nobody
+  pays for the other's choice.
+- Pro: images are already safe across builds: an image records its word size
+  and tag layout, and the reader rejects a mismatch.
+- Con: two of everything in CI. Build, tests and the SPARK proof run per
+  representation, with a recorded proof session each (ADR 0004). The
+  collector's proof is shared; root `Skit`'s differs.
+- Con, and the lasting one: the same Haskell program can behave differently
+  depending on how skit was built. `Int` wraps at 30 bits in one and not the
+  other, and `Double` loses precision in one and not the other. leander's
+  suites would have to run both ways, with per-variant expectations where
+  overflow or precision shows.
+- Prerequisite, shared with C: representation details must not leak outside
+  the representation's own code. Today they do (combinators handled by payload
+  number in `Skit.Machines`, `Skit.Debug` and the image format; maps keyed by
+  `Object_Payload`); skit#34 closes those leaks without changing behaviour.
+
+Not before C itself: until the numeric tower gives C a reason to exist, the
+second representation would have no users. When C is adopted, D is the
+cheaper of the two ways to do it if the float-density measurement (see
+Leaning) shows floats matter to some embeddings but not most.
+
 ## Decision drivers
 
 - **Failure-mode asymmetry.** NaN-box worst case (float-cold) is a bounded,
@@ -166,6 +199,54 @@ things to settle at the tower, in order: (1) measure the tower's float density â
 if floats are rare, reconsider option B (heap-boxed floats), whose only failure
 mode is float-heavy loops that a rare-float tower never triggers, keeping the
 cache-tight 32-bit hot path; (2) if float usage is real and hot, commit to C.
+
+## Interaction with the SPARK proof (added 2026-10-10)
+
+Since this ADR was deferred, [ADR 0004](0004-adopt-spark-for-the-memory-core.md)
+has been implemented: root `Skit` and `Skit.Memory` are proved with GNATprove,
+and CI replays the proof on every pull request. That does not change when to
+adopt option C. It does change what adopting it involves. ADR 0004 suggested
+proving against the final representation so that the proof is written once;
+it was proved against the 32-bit word instead, so option C means re-proving
+part of it.
+
+- **The collector's proof should carry over.** `Skit.Memory` sees an `Object`
+  only through `Is_Application`, `Payload`, `Application` and `Cell_Address`.
+  Its invariants (`Valid`, `Collecting`, `Counted` and the counting lemmas)
+  mention nothing else, so if option C keeps that interface, as this ADR
+  already intends, they stay as they are.
+- **Constraint: keep `Cell_Address` a small type of its own**, rather than
+  widening it to the NaN payload. `Valid`'s non-wrapping bounds,
+  `Count_Forwarded` and `Lemma_Room` rely on addresses fitting in `Natural`. A
+  30- or 32-bit cell index fits easily in the payload, so the heap limit need
+  not change.
+- **Root `Skit` is re-proved, and that is where the proof pays.**
+  - Tag predicates and constructors become mask-and-compare expression
+    functions on a private `mod 2**64` word. SMT provers handle that kind of
+    arithmetic well, so they should re-prove much as they did in ADR 0004's
+    stage 3.
+  - The central risk of option C, a genuine float colliding with the boxed
+    space, becomes provable. Nothing can be proved about the bits of an
+    arbitrary `Long_Float` (the conversion is opaque to the prover), but the
+    canonicalisation in `To_Object (Long_Float)` can be written on the integer
+    word: if the exponent is all ones and the mantissa nonzero, store the
+    reserved canonical NaN. A postcondition that the result is a float and no
+    other kind of object then holds for all 2^64 patterns.
+  - `To_Object (Integer)` stops wrapping once integers have at least 32 bits of
+    payload, so its round-trip postcondition becomes unconditional (and Haskell
+    `Int` in leander stops wrapping at 30 bits). The precondition that a
+    `Long_Float` fit in a `Float` goes away. `To_Float` stays outside SPARK:
+    SPARK does not accept a float as the target of an unchecked conversion.
+- **The rule that boxed non-floats are only moved, never used in float
+  arithmetic** is enforced by typing in the proved units, where `Object` is a
+  modular word. In `Skit.Machines`, which is not proved, it stays a coding
+  rule.
+- **When it lands**, CI's proof replay will fail, because the proof obligations
+  change. Re-run the full proof and commit the new session
+  ([proof/README.md](../../proof/README.md)); a check that no longer proves is
+  a real problem with the new representation. The image format records word
+  size and tag layout, so it needs a version bump, and the image reader's
+  representation-specific checks (#30) change with it.
 
 ## Open questions
 
