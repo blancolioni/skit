@@ -1,3 +1,5 @@
 /alire/
 /config/
 /obj/
+# Backups written by gnatprove --replay
+/sessions/**/*.bak
