@@ -86,6 +86,39 @@ with the box space.
   including compiler-side literal codegen, and `-gnatVa` validity checks lose
   meaning on a raw modular type.
 
+### D. Choose A or C at build time (added 2026-10-10)
+
+Keep both the 32-bit word and the NaN-boxed word, and let the embedding
+project choose. An Alire crate-configuration variable
+(`Object_Representation`, `Tagged_32` by default or `NaN_Boxed_64`) reaches
+`skit.gpr` through the generated config, which picks a source directory holding
+that representation; `Object` is completed in `skit.ads`'s private part as a
+type derived from it. A project chooses with one line in its own
+`alire.toml`.
+
+- Pro: it fits this ADR's dilemma directly. A float-heavy embedding gets IEEE
+  doubles, and everything else keeps the cache-tight 32-bit hot path; nobody
+  pays for the other's choice.
+- Pro: images are already safe across builds: an image records its word size
+  and tag layout, and the reader rejects a mismatch.
+- Con: two of everything in CI. Build, tests and the SPARK proof run per
+  representation, with a recorded proof session each (ADR 0004). The
+  collector's proof is shared; root `Skit`'s differs.
+- Con, and the lasting one: the same Haskell program can behave differently
+  depending on how skit was built. `Int` wraps at 30 bits in one and not the
+  other, and `Double` loses precision in one and not the other. leander's
+  suites would have to run both ways, with per-variant expectations where
+  overflow or precision shows.
+- Prerequisite, shared with C: representation details must not leak outside
+  the representation's own code. Today they do (combinators handled by payload
+  number in `Skit.Machines`, `Skit.Debug` and the image format; maps keyed by
+  `Object_Payload`); skit#34 closes those leaks without changing behaviour.
+
+Not before C itself: until the numeric tower gives C a reason to exist, the
+second representation would have no users. When C is adopted, D is the
+cheaper of the two ways to do it if the float-density measurement (see
+Leaning) shows floats matter to some embeddings but not most.
+
 ## Decision drivers
 
 - **Failure-mode asymmetry.** NaN-box worst case (float-cold) is a bounded,
