@@ -42,15 +42,16 @@ is
      (This : Instance;
       App  : Object)
       return Object
-     with Ghost, Pre => Valid (This) and then Is_Live (This, App);
+     with Pre => Valid (This) and then Is_Live (This, App);
 
    function Cell_Right
      (This : Instance;
       App  : Object)
       return Object
-     with Ghost, Pre => Valid (This) and then Is_Live (This, App);
+     with Pre => Valid (This) and then Is_Live (This, App);
    --  The contents of a live cell, for stating contracts; Left and Right
-   --  are what code calls.
+   --  are what code calls. Not ghost: they are trivial, and ghost entities
+   --  below are under a different policy (see Counted).
 
    function Left
      (This : Instance;
@@ -175,23 +176,46 @@ is
    function Scan_Complete (This : Instance) return Boolean;
    --  Every copied cell has been scanned.
 
+   --  Counted is what proves that the live set fits in one semispace: the
+   --  number of old-heap cells forwarded so far equals the number of
+   --  cells copied into to-space. A cell is forwarded at most once, so
+   --  while any old-heap cell is unforwarded, fewer than the old heap's
+   --  size -- at most Space_Size -- have been copied, and the next copy
+   --  fits.
+   --
+   --  The count is a recursive ghost function, as deep as the old heap is
+   --  long: evaluated at run time it would be slow and could overflow the
+   --  stack. Ghost code from here on is for proof only.
+   pragma Assertion_Policy (Ghost => Ignore);
+
+   function Counted (This : Instance) return Boolean
+     with Ghost, Pre => Valid (This);
+
    pragma Assertion_Policy (Pre => Ignore, Post => Ignore);
 
    procedure Before_GC (This : in out Instance)
      with Pre  => Heap_Valid (This),
-          Post => Collecting (This) and then Live_Cell_Count (This) = 0;
+          Post => Collecting (This)
+                  and then Counted (This)
+                  and then Live_Cell_Count (This) = 0;
 
    procedure Mark
      (This : in out Instance;
       Root : in out Object)
-     with Pre  => Collecting (This) and then Is_Unmoved (This, Root),
-          Post => Collecting (This) and then Is_Storable (This, Root);
+     with Pre  => Collecting (This)
+                  and then Counted (This)
+                  and then Is_Unmoved (This, Root),
+          Post => Collecting (This)
+                  and then Counted (This)
+                  and then Is_Storable (This, Root);
    --  A root that is not unmoved -- an application outside the old heap --
    --  is a stale pointer.
 
    procedure GC (This : in out Instance)
-     with Pre  => Collecting (This),
-          Post => Collecting (This) and then Scan_Complete (This);
+     with Pre  => Collecting (This) and then Counted (This),
+          Post => Collecting (This)
+                  and then Counted (This)
+                  and then Scan_Complete (This);
 
    procedure After_GC (This : in out Instance)
      with Pre  => Collecting (This) and then Scan_Complete (This),
@@ -256,6 +280,8 @@ private
        --  is what lets a prover see that every index below Top, and every
        --  index in from-space, is inside Core.
        and then Natural (This.Top) <= Natural (This.Last) + 1
+       and then Natural (This.Top)
+                  = Natural (This.To_Space) + Natural (This.Space_Size)
        and then Natural (This.From_Space) + Natural (This.Space_Size)
                   <= Natural (This.Last) + 1
        and then This.To_Space <= This.Scan
@@ -334,5 +360,46 @@ private
 
    function Scan_Complete (This : Instance) return Boolean
    is (This.Scan = This.Free);
+
+   function Is_Forwarded_Cell
+     (Core     : Cell_Array;
+      Address  : Cell_Address;
+      To_Space : Cell_Address;
+      Top      : Cell_Address)
+      return Boolean
+   is (Is_Application (Core (Address).Left)
+       and then Payload (Core (Address).Left) >= To_Space
+       and then Payload (Core (Address).Left) < Top)
+     with Ghost, Pre => Address in Core'Range;
+   --  The cell's Left points into to-space: during a collection, that
+   --  makes an old-heap cell forwarded.
+
+   function Count_Forwarded
+     (Core     : Cell_Array;
+      From     : Cell_Address;
+      Upto     : Cell_Address;
+      To_Space : Cell_Address;
+      Top      : Cell_Address)
+      return Natural
+   is (if Upto <= From
+       then 0
+       else Count_Forwarded (Core, From, Upto - 1, To_Space, Top)
+            + (if Is_Forwarded_Cell (Core, Upto - 1, To_Space, Top)
+               then 1 else 0))
+     with Ghost,
+          Pre  => From <= Upto
+                  and then From >= Core'First
+                  and then Natural (Upto) <= Natural (Core'Last) + 1,
+          Post => Count_Forwarded'Result <= Natural (Upto - From),
+          Subprogram_Variant => (Decreases => Upto);
+   --  How many cells in From .. Upto - 1 are forwarded. On arrays, not on
+   --  an Instance, so that lemmas can compare the core before and after a
+   --  write.
+
+   function Counted (This : Instance) return Boolean
+   is (Count_Forwarded
+         (This.Core, This.From_Space, This.From_Free,
+          This.To_Space, This.Top)
+       = Live_Cell_Count (This));
 
 end Skit.Memory;

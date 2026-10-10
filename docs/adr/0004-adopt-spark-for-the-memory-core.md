@@ -1,8 +1,28 @@
 # ADR 0004: Adopt SPARK for the Memory Core
 
-- **Status:** Proposed — stages 1–4 done: root `Skit` and `Skit.Memory` are proved, with one documented assumption (see Status updates 2026-10-09 and 2026-10-10)
+- **Status:** Proposed — stages 1–4 done: root `Skit` and `Skit.Memory` are proved, with no assumptions (see Status updates 2026-10-09 and 2026-10-10)
 - **Date:** 2026-07-07
 - **Deciders:** Fraser Wilson
+
+## Status update (2026-10-10): the counting proof
+
+The one assumption stage 4 left, that the live set fits in one semispace
+(`Free < Top` before each copy), is now proved, so `Skit.Memory` has no
+`pragma Assume`.
+
+- `Counted` is a ghost invariant alongside `Collecting`: a recursive ghost
+  count of forwarded old-heap cells equals the number of cells copied. Four
+  induction lemmas (nothing forwarded counts as zero; writes outside the old
+  heap leave the count alone; forwarding one cell adds one; while a cell is
+  unforwarded the count is below the old heap's size) and a small arithmetic
+  lemma give `Free < Top` before every copy.
+- The count recurses over the whole old heap, so it and the lemmas are ghost
+  code under `Ghost => Ignore` and never compiled. `Free < Top` itself is an
+  ordinary assertion, checked at run time.
+- The provers timed out inside `Move` and the `GC` loop once the count was
+  added, so copy-and-forward (`Forward_Copy`) and store-and-advance
+  (`Scan_Cell`) became separate procedures with their own contracts. Each
+  proves easily in its own small context.
 
 ## Status update (2026-10-10): stage 4
 

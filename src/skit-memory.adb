@@ -43,10 +43,116 @@ is
       return Boolean
    is (This.Top = Top
        and then This.To_Space = To_Space
-       and then This.From_Space = From_Space)
-     with Ghost;
+       and then This.From_Space = From_Space);
    --  The semispaces have not moved. Stating it lets a prover rebuild
    --  Valid by equalities after Copy and Move, instead of from scratch.
+   --  Not ghost: the spec's Ghost => Ignore policy carries over into this
+   --  body, and this is too cheap to be worth keeping out of the build.
+
+   --  Lemmas about Count_Forwarded, for the proof that the live set fits
+   --  in one semispace (see Counted in the spec). Each is proved by
+   --  induction on Upto, and each walks the whole old heap, so they are
+   --  ghost and ignored at run time.
+   pragma Assertion_Policy (Ghost => Ignore);
+
+   function Counting_Range
+     (Core : Cell_Array;
+      From : Cell_Address;
+      Upto : Cell_Address)
+      return Boolean
+   is (From <= Upto
+       and then From >= Core'First
+       and then Natural (Upto) <= Natural (Core'Last) + 1)
+     with Ghost;
+   --  The precondition of Count_Forwarded.
+
+   procedure Lemma_None_Forwarded
+     (Core     : Cell_Array;
+      From     : Cell_Address;
+      Upto     : Cell_Address;
+      To_Space : Cell_Address;
+      Top      : Cell_Address)
+     with Ghost,
+          Pre  => Counting_Range (Core, From, Upto)
+                  and then (for all A in Core'Range =>
+                              (if A >= From and then A < Upto
+                               then not Is_Forwarded_Cell
+                                          (Core, A, To_Space, Top))),
+          Post => Count_Forwarded (Core, From, Upto, To_Space, Top) = 0,
+          Subprogram_Variant => (Decreases => Upto);
+   --  Nothing forwarded counts as nothing.
+
+   procedure Lemma_Same_Lefts
+     (Before   : Cell_Array;
+      After    : Cell_Array;
+      From     : Cell_Address;
+      Upto     : Cell_Address;
+      To_Space : Cell_Address;
+      Top      : Cell_Address)
+     with Ghost,
+          Pre  => Before'First = After'First
+                  and then Before'Last = After'Last
+                  and then Counting_Range (Before, From, Upto)
+                  and then (for all A in Before'Range =>
+                              (if A >= From and then A < Upto
+                               then Before (A).Left = After (A).Left)),
+          Post => Count_Forwarded (After, From, Upto, To_Space, Top)
+                    = Count_Forwarded (Before, From, Upto, To_Space, Top),
+          Subprogram_Variant => (Decreases => Upto);
+   --  Writing cells outside the range leaves the count alone.
+
+   procedure Lemma_Forward_One
+     (Before   : Cell_Array;
+      After    : Cell_Array;
+      From     : Cell_Address;
+      Upto     : Cell_Address;
+      To_Space : Cell_Address;
+      Top      : Cell_Address;
+      Address  : Cell_Address)
+     with Ghost,
+          Pre  => Before'First = After'First
+                  and then Before'Last = After'Last
+                  and then Counting_Range (Before, From, Upto)
+                  and then Address >= From
+                  and then Address < Upto
+                  and then not Is_Forwarded_Cell
+                                 (Before, Address, To_Space, Top)
+                  and then Is_Forwarded_Cell (After, Address, To_Space, Top)
+                  and then (for all A in Before'Range =>
+                              (if A >= From and then A < Upto
+                                 and then A /= Address
+                               then Before (A).Left = After (A).Left)),
+          Post => Count_Forwarded (After, From, Upto, To_Space, Top)
+                    = Count_Forwarded (Before, From, Upto, To_Space, Top) + 1,
+          Subprogram_Variant => (Decreases => Upto);
+   --  Forwarding one more cell adds one.
+
+   procedure Lemma_Unforwarded_Bound
+     (Core     : Cell_Array;
+      From     : Cell_Address;
+      Upto     : Cell_Address;
+      To_Space : Cell_Address;
+      Top      : Cell_Address;
+      Address  : Cell_Address)
+     with Ghost,
+          Pre  => Counting_Range (Core, From, Upto)
+                  and then Address >= From
+                  and then Address < Upto
+                  and then not Is_Forwarded_Cell
+                                 (Core, Address, To_Space, Top),
+          Post => Count_Forwarded (Core, From, Upto, To_Space, Top)
+                    < Natural (Upto - From),
+          Subprogram_Variant => (Decreases => Upto);
+   --  While one cell is unforwarded, not all of them are.
+
+   procedure Lemma_Room (This : Instance)
+     with Ghost,
+          Pre  => Valid (This)
+                  and then Live_Cell_Count (This)
+                             < Natural (This.From_Free - This.From_Space),
+          Post => This.Free < This.Top;
+   --  Fewer cells copied than the old heap holds leaves room for another:
+   --  the old heap is no bigger than a semispace.
 
    --  Copy and Move maintain Collecting, which walks both spaces: checked
    --  on every call it would make a collection quadratic. Flip's Post
@@ -81,17 +187,63 @@ is
                   and then This.From_Free = This.From_Free'Old
                   and then This.Core
                              = (This.Core'Old with delta
-                                  New_Address => This.Core'Old (Address));
+                                  New_Address => This.Core'Old (Address))
+                  and then This.Core (Address) = This.Core'Old (Address);
    --  Copy an old-heap cell that has not been copied yet to the end of
    --  to-space. The live set has to fit in one semispace; see Move.
+
+   procedure Forward_Copy
+     (This        : in out Instance;
+      Address     : Cell_Address;
+      New_Address : out Cell_Address)
+     with Pre  => Collecting (This)
+                  and then Counted (This)
+                  and then This.Free < This.Top
+                  and then In_Old_Heap (This, Application (Address))
+                  and then not In_To_Space (This, This.Core (Address).Left),
+          Post => Same_Layout (This, This.Top'Old, This.To_Space'Old,
+                               This.From_Space'Old)
+                  and then Collecting (This)
+                  and then Counted (This)
+                  and then New_Address = This.Free'Old
+                  and then This.Free = This.Free'Old + 1
+                  and then This.Scan = This.Scan'Old
+                  and then This.From_Free = This.From_Free'Old
+                  and then This.Core (Address).Left
+                             = Application (New_Address);
+   --  Copy an unforwarded old-heap cell to the end of to-space, and leave
+   --  a forwarding pointer to the copy in its Left. Separate from Move so
+   --  that its proof has a small context.
+
+   procedure Scan_Cell
+     (This  : in out Instance;
+      Left  : Object;
+      Right : Object)
+     with Pre  => Collecting (This)
+                  and then Counted (This)
+                  and then This.Scan < This.Free
+                  and then Is_Storable (This, Left)
+                  and then Is_Storable (This, Right),
+          Post => Same_Layout (This, This.Top'Old, This.To_Space'Old,
+                               This.From_Space'Old)
+                  and then Collecting (This)
+                  and then Counted (This)
+                  and then This.Scan = This.Scan'Old + 1
+                  and then This.Free = This.Free'Old
+                  and then This.From_Free = This.From_Free'Old;
+   --  Store the moved contents of the cell at Scan and move Scan on. A
+   --  separate procedure, like Forward_Copy, for a small proof context.
 
    procedure Move
      (This : in out Instance;
       Item : in out Object)
-     with Pre  => Collecting (This) and then Is_Unmoved (This, Item),
+     with Pre  => Collecting (This)
+                  and then Counted (This)
+                  and then Is_Unmoved (This, Item),
           Post => Same_Layout (This, This.Top'Old, This.To_Space'Old,
                                This.From_Space'Old)
                   and then Collecting (This)
+                  and then Counted (This)
                   and then Is_Storable (This, Item)
                   and then This.Scan = This.Scan'Old
                   and then This.Free >= This.Free'Old
@@ -154,6 +306,10 @@ is
    begin
       pragma Assert (Valid (This));
       Flip (This);
+      --  Nothing is forwarded yet: every old-heap value is still in the
+      --  old heap, inside from-space, or not an application.
+      Lemma_None_Forwarded
+        (This.Core, This.From_Space, This.From_Free, This.To_Space, This.Top);
       if This.Stats.Epoch_Remembered > This.Stats.Max_Remembered then
          This.Stats.Max_Remembered := This.Stats.Epoch_Remembered;
       end if;
@@ -185,6 +341,9 @@ is
    procedure Flip (This : in out Instance) is
       Original_To_Space : constant Cell_Address := This.To_Space;
    begin
+      pragma Assert
+        (Natural (This.From_Space) + Natural (This.Space_Size)
+           <= Natural (This.Last) + 1);
       This.From_Free := This.Free;
       This.To_Space := This.From_Space;
       This.From_Space := Original_To_Space;
@@ -192,6 +351,75 @@ is
       This.Free := This.To_Space;
       This.Scan := This.To_Space;
    end Flip;
+
+   ------------------
+   -- Forward_Copy --
+   ------------------
+
+   procedure Forward_Copy
+     (This        : in out Instance;
+      Address     : Cell_Address;
+      New_Address : out Cell_Address)
+   is
+   begin
+      --  By Collecting, the Left of an old-heap cell is unmoved or live;
+      --  not being in to-space, it is unmoved, as Copy requires.
+      pragma Assert (Is_Unmoved (This, This.Core (Address).Left));
+      --  Address is in the old heap, inside from-space, so neither
+      --  Copy, which writes to-space, nor any to-space write after it
+      --  touches Address; and the write to Address below leaves every
+      --  to-space cell as it was.
+      pragma Assert
+        (Address < This.To_Space or else Address >= This.Top);
+      declare
+         Before_Copy : constant Cell_Array := This.Core with Ghost;
+      begin
+         Copy (This, Address, New_Address);
+         --  The copy went to to-space, outside the old heap.
+         pragma Assert
+           (if This.To_Space = 0
+            then New_Address < This.From_Space
+            else New_Address >= This.From_Free);
+         declare
+            pragma Assertion_Policy (Assert => Ignore);
+         begin
+            pragma Assert (New_Address /= Address);
+            pragma Assert
+              (not Is_Forwarded_Cell
+                     (This.Core, Address, This.To_Space, This.Top));
+            pragma Assert
+              (for all A in This.Core'Range =>
+                 (if A >= This.From_Space and then A < This.From_Free
+                  then Before_Copy (A).Left = This.Core (A).Left));
+         end;
+         Lemma_Same_Lefts
+           (Before_Copy, This.Core, This.From_Space, This.From_Free,
+            This.To_Space, This.Top);
+      end;
+      declare
+         Before_Forward : constant Cell_Array := This.Core with Ghost;
+      begin
+         This.Core (Address).Left := Application (New_Address);
+         declare
+            pragma Assertion_Policy (Assert => Ignore);
+         begin
+            pragma Assert
+              (not Is_Forwarded_Cell
+                     (Before_Forward, Address, This.To_Space, This.Top));
+            pragma Assert
+              (Is_Forwarded_Cell
+                 (This.Core, Address, This.To_Space, This.Top));
+            pragma Assert
+              (for all A in This.Core'Range =>
+                 (if A >= This.From_Space and then A < This.From_Free
+                    and then A /= Address
+                  then Before_Forward (A).Left = This.Core (A).Left));
+         end;
+         Lemma_Forward_One
+           (Before_Forward, This.Core, This.From_Space, This.From_Free,
+            This.To_Space, This.Top, Address);
+      end;
+   end Forward_Copy;
 
    --------
    -- GC --
@@ -204,7 +432,9 @@ is
    begin
       while This.Scan < This.Free loop
          pragma Loop_Invariant
-           (Collecting (This) and then This.Scan < This.Free);
+           (Collecting (This)
+            and then Counted (This)
+            and then This.Scan < This.Free);
          declare
             --  Copies, not a renaming of the cell: Move updates This, and
             --  a name for part of This held across that would alias it.
@@ -213,19 +443,127 @@ is
          begin
             Move (This, Left);
             Move (This, Right);
-            --  Scan is in to-space and the old heap is in from-space, so
-            --  the write below leaves every old-heap cell as it was.
-            pragma Assert
-              (This.Scan >= This.To_Space and then This.Scan < This.Top);
-            pragma Assert
-              (if This.To_Space = 0
-               then This.Scan < This.From_Space
-               else This.Scan >= This.From_Free);
-            This.Core (This.Scan) := (Left, Right);
-            This.Scan := @ + 1;
+            Scan_Cell (This, Left, Right);
          end;
       end loop;
    end GC;
+
+   -----------------------
+   -- Lemma_Forward_One --
+   -----------------------
+
+   procedure Lemma_Forward_One
+     (Before   : Cell_Array;
+      After    : Cell_Array;
+      From     : Cell_Address;
+      Upto     : Cell_Address;
+      To_Space : Cell_Address;
+      Top      : Cell_Address;
+      Address  : Cell_Address)
+   is
+   begin
+      if Address = Upto - 1 then
+         Lemma_Same_Lefts (Before, After, From, Upto - 1, To_Space, Top);
+         pragma Assert
+           (Count_Forwarded (Before, From, Upto, To_Space, Top)
+              = Count_Forwarded (Before, From, Upto - 1, To_Space, Top));
+         pragma Assert
+           (Count_Forwarded (After, From, Upto, To_Space, Top)
+              = Count_Forwarded (After, From, Upto - 1, To_Space, Top) + 1);
+      else
+         pragma Assert (Before (Upto - 1).Left = After (Upto - 1).Left);
+         pragma Assert
+           (Is_Forwarded_Cell (Before, Upto - 1, To_Space, Top)
+              = Is_Forwarded_Cell (After, Upto - 1, To_Space, Top));
+         Lemma_Forward_One
+           (Before, After, From, Upto - 1, To_Space, Top, Address);
+         pragma Assert
+           (Count_Forwarded (Before, From, Upto, To_Space, Top)
+              = Count_Forwarded (Before, From, Upto - 1, To_Space, Top)
+                + (if Is_Forwarded_Cell (Before, Upto - 1, To_Space, Top)
+                   then 1 else 0));
+         pragma Assert
+           (Count_Forwarded (After, From, Upto, To_Space, Top)
+              = Count_Forwarded (After, From, Upto - 1, To_Space, Top)
+                + (if Is_Forwarded_Cell (After, Upto - 1, To_Space, Top)
+                   then 1 else 0));
+      end if;
+   end Lemma_Forward_One;
+
+   --------------------------
+   -- Lemma_None_Forwarded --
+   --------------------------
+
+   procedure Lemma_None_Forwarded
+     (Core     : Cell_Array;
+      From     : Cell_Address;
+      Upto     : Cell_Address;
+      To_Space : Cell_Address;
+      Top      : Cell_Address)
+   is
+   begin
+      if Upto > From then
+         pragma Assert
+           (not Is_Forwarded_Cell (Core, Upto - 1, To_Space, Top));
+         Lemma_None_Forwarded (Core, From, Upto - 1, To_Space, Top);
+      end if;
+   end Lemma_None_Forwarded;
+
+   ----------------
+   -- Lemma_Room --
+   ----------------
+
+   procedure Lemma_Room (This : Instance) is
+   begin
+      pragma Assert
+        (Natural (This.From_Free - This.From_Space)
+           <= Natural (This.Space_Size));
+      pragma Assert
+        (Natural (This.Free - This.To_Space) < Natural (This.Space_Size));
+      pragma Assert
+        (Natural (This.Free)
+           < Natural (This.To_Space) + Natural (This.Space_Size));
+   end Lemma_Room;
+
+   ----------------------
+   -- Lemma_Same_Lefts --
+   ----------------------
+
+   procedure Lemma_Same_Lefts
+     (Before   : Cell_Array;
+      After    : Cell_Array;
+      From     : Cell_Address;
+      Upto     : Cell_Address;
+      To_Space : Cell_Address;
+      Top      : Cell_Address)
+   is
+   begin
+      if Upto > From then
+         pragma Assert (Before (Upto - 1).Left = After (Upto - 1).Left);
+         Lemma_Same_Lefts (Before, After, From, Upto - 1, To_Space, Top);
+      end if;
+   end Lemma_Same_Lefts;
+
+   -----------------------------
+   -- Lemma_Unforwarded_Bound --
+   -----------------------------
+
+   procedure Lemma_Unforwarded_Bound
+     (Core     : Cell_Array;
+      From     : Cell_Address;
+      Upto     : Cell_Address;
+      To_Space : Cell_Address;
+      Top      : Cell_Address;
+      Address  : Cell_Address)
+   is
+   begin
+      --  Where Address is the last cell, the Post of Count_Forwarded on
+      --  the rest of the range is enough.
+      if Address /= Upto - 1 then
+         Lemma_Unforwarded_Bound
+           (Core, From, Upto - 1, To_Space, Top, Address);
+      end if;
+   end Lemma_Unforwarded_Bound;
 
    ---------------
    -- Live_Cell --
@@ -334,22 +672,16 @@ is
             else
                This.Stats.Transient_Copied := @ + 1;
             end if;
-            --  Each from-space cell is copied at most once (it is marked
-            --  as forwarded straight after), and from-space holds
-            --  Space_Size cells, so copying never runs past Top. Proving
-            --  that needs a count of forwarded cells; until then it is an
-            --  assumption, recorded in proof/README.md.
-            pragma Assume
-              (This.Free < This.Top,
-               "a collection copies each from-space cell at most once");
-            Copy (This, Address, New_Address);
-            --  Address is in the old heap, inside from-space, so the write
-            --  below leaves every to-space cell as it was.
-            pragma Assert
-              (Address < This.To_Space or else Address >= This.Top);
-            This.Core (Address).Left := Application (New_Address);
-            pragma Assert (Valid (This));
-            pragma Assert (Is_Live (This, This.Core (Address).Left));
+            --  This cell is not forwarded, so fewer than all old-heap cells
+            --  are; by Counted, fewer cells than that have been copied, and
+            --  the old heap is no bigger than a semispace. So there is room.
+            Lemma_Unforwarded_Bound
+              (This.Core, This.From_Space, This.From_Free,
+               This.To_Space, This.Top, Address);
+            Lemma_Room (This);
+            pragma Assert (This.Free < This.Top);
+            Forward_Copy (This, Address, New_Address);
+            Item := Application (New_Address);
          else
             --  Forwarded already: by Collecting the Left of an old-heap
             --  cell is unmoved or live, and an unmoved value is never in
@@ -360,8 +692,8 @@ is
                or else Is_Live (This, This.Core (Address).Left));
             pragma Assert (not In_Old_Heap (This, This.Core (Address).Left));
             pragma Assert (Is_Live (This, This.Core (Address).Left));
+            Item := This.Core (Address).Left;
          end if;
-         Item := This.Core (Address).Left;
       end;
    end Move;
 
@@ -391,6 +723,45 @@ is
       pragma Assert (Is_Live (This, App));
       return This.Core (Payload (App)).Right;
    end Right;
+
+   ---------------
+   -- Scan_Cell --
+   ---------------
+
+   procedure Scan_Cell
+     (This  : in out Instance;
+      Left  : Object;
+      Right : Object)
+   is
+      Before_Write : constant Cell_Array := This.Core with Ghost;
+   begin
+      --  Scan is in to-space and the old heap is in from-space, so the
+      --  write below leaves every old-heap cell as it was.
+      pragma Assert
+        (This.Scan >= This.To_Space and then This.Scan < This.Top);
+      pragma Assert
+        (if This.To_Space = 0
+         then This.Scan < This.From_Space
+         else This.Scan >= This.From_Free);
+      This.Core (This.Scan) := (Left, Right);
+      This.Scan := @ + 1;
+      declare
+         --  Proof-only hints: they mention ghost values, which are not
+         --  compiled.
+         pragma Assertion_Policy (Assert => Ignore);
+      begin
+         pragma Assert
+           (for all A in This.Core'Range =>
+              (if A /= This.Scan - 1 then This.Core (A) = Before_Write (A)));
+         pragma Assert
+           (for all A in This.Core'Range =>
+              (if A >= This.From_Space and then A < This.From_Free
+               then Before_Write (A).Left = This.Core (A).Left));
+      end;
+      Lemma_Same_Lefts
+        (Before_Write, This.Core, This.From_Space, This.From_Free,
+         This.To_Space, This.Top);
+   end Scan_Cell;
 
    --------------
    -- Set_Left --
