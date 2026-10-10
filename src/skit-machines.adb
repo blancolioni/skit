@@ -124,7 +124,7 @@ package body Skit.Machines is
       Name  : Object;
       Value : Object)
    is
-      Key      : constant Object_Payload := Payload (Name);
+      Key      : constant Natural := Symbol_Index (Name);
       Position : constant Environment_Maps.Cursor :=
                    This.Environment.Find (Key);
    begin
@@ -205,7 +205,7 @@ package body Skit.Machines is
       is (Is_Primitive_Function (X)
           and then Primitive_Function_Index (X) <= This.Prims.Last_Index);
 
-      procedure Eval_Combinator (Combinator : Combinator_Payload);
+      procedure Eval_Combinator (Which : Combinator_Kind);
       procedure Eval_Primitive (F : Object)
         with Pre => Is_Defined_Primitive (F);
 
@@ -273,15 +273,15 @@ package body Skit.Machines is
       -- Eval_Combinator --
       ---------------------
 
-      procedure Eval_Combinator (Combinator : Combinator_Payload) is
+      procedure Eval_Combinator (Which : Combinator_Kind) is
          use Skit.Memory;
          Arg_Count : constant Natural :=
-                       (case Combinator is
-                           when Payload_I | Payload_Y             => 1,
-                           when Payload_K                         => 2,
-                           when Payload_S | Payload_C | Payload_B => 3,
-                           when Payload_C_Prime | Payload_B_Star  => 4,
-                           when Payload_S_Prime                   => 4);
+                       (case Which is
+                           when Comb_I | Comb_Y             => 1,
+                           when Comb_K                      => 2,
+                           when Comb_S | Comb_C | Comb_B    => 3,
+                           when Comb_C_Prime | Comb_B_Star  => 4,
+                           when Comb_S_Prime                => 4);
 
          X : Object_Array renames This.R (1 .. Arg_Count);
 
@@ -315,7 +315,7 @@ package body Skit.Machines is
 
          if Pop (X) then
             Changed := True;
-            if Combinator = Payload_Y then
+            if Which = Comb_Y then
                --  Fixpoint by knot-tying.  The redex root X (1) is the node
                --  App (Y, f).  Rewrite it in place to App (f, X (1)) -- a
                --  self-referential cell whose own value is the fixpoint.
@@ -333,40 +333,40 @@ package body Skit.Machines is
                end;
                return;
             end if;
-            case Combinator is
-               when Payload_Y =>
+            case Which is
+               when Comb_Y =>
                   null;  --  handled above, before this case
 
-               when Payload_I =>
+               when Comb_I =>
                   Push (1);
 
-               when Payload_K =>
+               when Comb_K =>
                   Push (1);
 
-               when Payload_S =>
+               when Comb_S =>
                   Push (1);
                   Push (3);
                   Apply;
+                  Push (2);
+                  Push (3);
+                  Apply;
+                  Apply;
+
+               when Comb_B =>
+                  Push (1);
                   Push (2);
                   Push (3);
                   Apply;
                   Apply;
 
-               when Payload_B =>
-                  Push (1);
-                  Push (2);
-                  Push (3);
-                  Apply;
-                  Apply;
-
-               when Payload_C =>
+               when Comb_C =>
                   Push (1);
                   Push (3);
                   Apply;
                   Push (2);
                   Apply;
 
-               when Payload_S_Prime =>
+               when Comb_S_Prime =>
                   Push (1);
                   Push (2);
                   Push (4);
@@ -377,7 +377,7 @@ package body Skit.Machines is
                   Apply;
                   Apply;
 
-               when Payload_B_Star =>
+               when Comb_B_Star =>
                   Push (1);
                   Push (2);
                   Push (3);
@@ -386,7 +386,7 @@ package body Skit.Machines is
                   Apply;
                   Apply;
 
-               when Payload_C_Prime =>
+               when Comb_C_Prime =>
                   Push (1);
                   Push (2);
                   Push (4);
@@ -398,7 +398,7 @@ package body Skit.Machines is
 
             It := This.Pop;
             if Is_Application (It)
-              and then Combinator not in Payload_I | Payload_K
+              and then Which not in Comb_I | Comb_K
             then
                --  S, B, C, S', B*, C' build a fresh top node unique to this
                --  redex, so overwrite the root with its contents directly
@@ -670,7 +670,7 @@ package body Skit.Machines is
          end if;
 
          if Is_Combinator (It) then
-            Eval_Combinator (Payload (It));
+            Eval_Combinator (Combinator_Of (It));
          elsif Is_Primitive_Function (It) then
             if Is_Defined_Primitive (It) then
                Eval_Primitive (It);
@@ -680,7 +680,7 @@ package body Skit.Machines is
             end if;
          elsif Is_Primitive (It) then
             raise Constraint_Error with
-              "invalid primitive:" & Payload (It)'Image;
+              "invalid primitive: " & This.Debug_Image (It);
          else
             This.Push (It);
          end if;
@@ -806,7 +806,8 @@ package body Skit.Machines is
       return Object
    is
       use Environment_Maps;
-      Position : constant Cursor := This.Environment.Find (Payload (Name));
+      Position : constant Cursor :=
+                   This.Environment.Find (Symbol_Index (Name));
    begin
       if Has_Element (Position) then
          return Element (Position);

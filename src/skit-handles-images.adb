@@ -34,6 +34,18 @@ package body Skit.Handles.Images is
    Kind_Symbol      : constant := 4;
    Kind_Foreign     : constant := 5;
 
+   --  The combinators and special objects, by the number the image format
+   --  gives them (module-image-format.md; pinned by vm_version). These are
+   --  the format's numbers, not the in-memory representation's: S .. Y are
+   --  Format_First_Combinator onward, in Combinator order.
+   Format_Nil              : constant := 0;
+   Format_First_Combinator : constant := 1;
+   Format_Undefined        : constant := 10;
+   Format_Suspension       : constant := 11;
+
+   function Format_Code (C : Combinator_Kind) return Unsigned_32
+   is (Format_First_Combinator + Combinator_Kind'Pos (C));
+
    Section_Pool        : constant := 0;
    Section_Cells       : constant := 1;
    Section_Exports     : constant := 2;
@@ -283,30 +295,24 @@ package body Skit.Handles.Images is
       return R;
    end Read_Name;
 
-   -----------------------------
-   -- Combinator_From_Payload --
-   -----------------------------
+   ----------------------
+   -- From_Format_Code --
+   ----------------------
 
-   function Combinator_From_Payload (P : Object_Payload) return Object is
+   function From_Format_Code (Code : Unsigned_32) return Object is
    begin
-      case P is
-         when Payload_Nil        => return Nil;
-         when Payload_S          => return S;
-         when Payload_K          => return K;
-         when Payload_I          => return I;
-         when Payload_C          => return C;
-         when Payload_B          => return B;
-         when Payload_S_Prime    => return S_Prime;
-         when Payload_B_Star     => return B_Star;
-         when Payload_C_Prime    => return C_Prime;
-         when Payload_Y          => return Y;
-         when Payload_Undefined  => return Undefined;
-         when Payload_Suspension => return Suspension;
+      case Code is
+         when Format_Nil                          => return Nil;
+         when Format_First_Combinator
+              .. Format_First_Combinator + 8      =>
+            return To_Object
+                     (Combinator_Kind'Val (Code - Format_First_Combinator));
+         when Format_Undefined                    => return Undefined;
+         when Format_Suspension                   => return Suspension;
          when others =>
-            raise Image_Error with
-              "unknown combinator payload" & P'Image;
+            raise Image_Error with "unknown combinator code" & Code'Image;
       end case;
-   end Combinator_From_Payload;
+   end From_Format_Code;
 
    ----------------
    -- Get_Object --
@@ -340,15 +346,7 @@ package body Skit.Handles.Images is
                return To_Object (X);
             end;
          when Kind_Combinator =>
-            declare
-               X : constant Unsigned_32 := Get_U32 (D, C);
-            begin
-               if X > Unsigned_32 (Object_Payload'Last) then
-                  raise Image_Error with
-                    "unknown combinator payload" & X'Image;
-               end if;
-               return Combinator_From_Payload (Object_Payload (X));
-            end;
+            return From_Format_Code (Get_U32 (D, C));
          when Kind_Symbol =>
             return Sym (Get_Index (D, C, Natural (Sym.Length), "symbol"));
          when Kind_Foreign =>
@@ -373,8 +371,11 @@ package body Skit.Handles.Images is
    is
       use Ada.Strings.Unbounded;
 
-      package Id_Maps is
-        new Ada.Containers.Ordered_Maps (Object_Payload, Natural);
+      package Address_Id_Maps is
+        new Ada.Containers.Ordered_Maps (Cell_Address, Natural);
+
+      package Index_Id_Maps is
+        new Ada.Containers.Ordered_Maps (Natural, Natural);
 
       package Name_Offset_Maps is
         new Ada.Containers.Indefinite_Ordered_Maps (String, Natural);
@@ -388,7 +389,8 @@ package body Skit.Handles.Images is
         new Ada.Containers.Vectors (Natural, Node);
 
       package Prim_Name_Maps is
-        new Ada.Containers.Ordered_Maps (Object_Payload, Unbounded_String);
+        new Ada.Containers.Ordered_Maps (Natural, Unbounded_String);
+      --  Keyed by Primitive_Function_Index.
 
       --  A named import: the (cell, side) slot holds the Undefined sentinel in
       --  the Cells section and is resolved by Name at load.
@@ -402,8 +404,8 @@ package body Skit.Handles.Images is
       package Import_Vectors is
         new Ada.Containers.Vectors (Natural, Import_Entry);
 
-      package Payload_Sets is
-        new Ada.Containers.Ordered_Sets (Object_Payload);
+      package Index_Sets is
+        new Ada.Containers.Ordered_Sets (Natural);
 
       --  Per-export annotation bytes, collected once and shared by the
       --  Annotations section and the interface fingerprint below.  The
@@ -432,14 +434,14 @@ package body Skit.Handles.Images is
       Pool          : Byte_Vectors.Vector;
       Pool_Names    : Name_Offset_Maps.Map;
       Nodes         : Node_Vectors.Vector;
-      Id_Of         : Id_Maps.Map;
+      Id_Of         : Address_Id_Maps.Map;
       Reverse_Names : Prim_Name_Maps.Map;
       Imports       : Import_Vectors.Vector;
-      Sym_Ids       : Id_Maps.Map;              --  symbol payload -> local id
+      Sym_Ids       : Index_Id_Maps.Map;  --  Symbol_Index -> local id
       Sym_List      : Object_Vectors.Vector;    --  local id -> symbol object
-      Foreign_Ids   : Id_Maps.Map;              --  foreign payload -> local id
+      Foreign_Ids   : Index_Id_Maps.Map;  --  Foreign_Object_Index -> local id
       Foreign_List  : Foreign_Vectors.Vector;   --  local id -> foreign record
-      Visiting      : Payload_Sets.Set;         --  foreign cycle guard
+      Visiting      : Index_Sets.Set;     --  foreign cycle guard
 
       function Intern (Name : String) return Unsigned_32;
       procedure Put_Object (B : in out Byte_Vectors.Vector; O : Object);
@@ -477,29 +479,36 @@ package body Skit.Handles.Images is
       begin
          if Is_Application (O) then
             Put_U8 (B, Kind_Application);
-            Put_U32 (B, Unsigned_32 (Id_Of.Element (Payload (O))));
+            Put_U32 (B, Unsigned_32 (Id_Of.Element (Address (O))));
          elsif Is_Integer (O) then
             Put_U8 (B, Kind_Integer);
             Put_I32 (B, To_Integer (O));
          elsif Is_Float (O) then
             Put_U8 (B, Kind_Float);
             Put_F64 (B, To_Float (O));
-         elsif Is_Primitive (O) and then Payload (O) <= Payload_Suspension then
+         elsif Is_Combinator (O) then
             Put_U8 (B, Kind_Combinator);
-            Put_U32 (B, Unsigned_32 (Payload (O)));
+            Put_U32 (B, Format_Code (Combinator_Of (O)));
+         elsif O = Nil or else O = Undefined or else O = Suspension then
+            Put_U8 (B, Kind_Combinator);
+            Put_U32 (B, (if O = Nil then Format_Nil
+                         elsif O = Undefined then Format_Undefined
+                         else Format_Suspension));
          elsif Is_Symbol (O) then
             --  Serialize a symbol by name: assign a local id (emitted in the
             --  Symbols section) and re-intern it into the loading handle.
             Put_U8 (B, Kind_Symbol);
-            if not Sym_Ids.Contains (Payload (O)) then
-               Sym_Ids.Insert (Payload (O), Natural (Sym_List.Length));
+            if not Sym_Ids.Contains (Symbol_Index (O)) then
+               Sym_Ids.Insert (Symbol_Index (O), Natural (Sym_List.Length));
                Sym_List.Append (O);
             end if;
-            Put_U32 (B, Unsigned_32 (Sym_Ids.Element (Payload (O))));
+            Put_U32 (B, Unsigned_32 (Sym_Ids.Element (Symbol_Index (O))));
          elsif Is_Foreign_Object (O) then
             --  A foreign object is assigned its local id during Scan.
             Put_U8 (B, Kind_Foreign);
-            Put_U32 (B, Unsigned_32 (Foreign_Ids.Element (Payload (O))));
+            Put_U32
+              (B,
+               Unsigned_32 (Foreign_Ids.Element (Foreign_Object_Index (O))));
          else
             raise Image_Error with
               "cannot serialize object (primitive function): "
@@ -525,7 +534,7 @@ package body Skit.Handles.Images is
          if Is_Primitive_Function (O) then
             declare
                Pos : constant Prim_Name_Maps.Cursor :=
-                       Reverse_Names.Find (Payload (O));
+                       Reverse_Names.Find (Primitive_Function_Index (O));
             begin
                if not Prim_Name_Maps.Has_Element (Pos) then
                   raise Image_Error with
@@ -533,7 +542,7 @@ package body Skit.Handles.Images is
                     & This.Image (O);
                end if;
                Put_U8 (B, Kind_Combinator);
-               Put_U32 (B, Unsigned_32 (Payload_Undefined));
+               Put_U32 (B, Format_Undefined);
                Imports.Append
                  (Import_Entry'(Cell_Index, Side,
                                 Prim_Name_Maps.Element (Pos)));
@@ -549,25 +558,25 @@ package body Skit.Handles.Images is
 
       procedure Scan (O : Object) is
       begin
-         if Is_Application (O) and then not Id_Of.Contains (Payload (O)) then
+         if Is_Application (O) and then not Id_Of.Contains (Address (O)) then
             declare
                Idx : constant Natural := Natural (Nodes.Length);
                L   : constant Object := This.H.Machine.Left (O);
                R   : constant Object := This.H.Machine.Right (O);
             begin
-               Id_Of.Insert (Payload (O), Idx);
+               Id_Of.Insert (Address (O), Idx);
                Nodes.Append (Node'(Left => L, Right => R));
                Scan (L);
                Scan (R);
             end;
          elsif Is_Foreign_Object (O)
-           and then not Foreign_Ids.Contains (Payload (O))
+           and then not Foreign_Ids.Contains (Foreign_Object_Index (O))
          then
-            if Visiting.Contains (Payload (O)) then
+            if Visiting.Contains (Foreign_Object_Index (O)) then
                raise Image_Error with
                  "cyclic foreign object not supported: " & This.Image (O);
             end if;
-            Visiting.Insert (Payload (O));
+            Visiting.Insert (Foreign_Object_Index (O));
             declare
                Ref  : constant Foreign_Reference :=
                         This.H.Machine.Foreign_Object_Ref (O);
@@ -584,9 +593,9 @@ package body Skit.Handles.Images is
                for Kid of Kids loop
                   Scan (Kid);   --  nested foreign objects get lower ids
                end loop;
-               Visiting.Delete (Payload (O));
+               Visiting.Delete (Foreign_Object_Index (O));
                Foreign_Ids.Insert
-                 (Payload (O), Natural (Foreign_List.Length));
+                 (Foreign_Object_Index (O), Natural (Foreign_List.Length));
                Foreign_List.Append (Foreign_Rec'(Ref => Ref, Kids => Kids));
             end;
          end if;
@@ -630,10 +639,12 @@ package body Skit.Handles.Images is
             Value : constant Object := This.Lookup (Name);
          begin
             if Value /= Undefined and then Is_Primitive_Function (Value)
-              and then not Reverse_Names.Contains (Payload (Value))
+              and then not Reverse_Names.Contains
+                             (Primitive_Function_Index (Value))
             then
                Reverse_Names.Insert
-                 (Payload (Value), To_Unbounded_String (Name));
+                 (Primitive_Function_Index (Value),
+                  To_Unbounded_String (Name));
             end if;
          end;
       end loop;

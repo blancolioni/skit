@@ -153,12 +153,12 @@ private
 
    package Environment_Maps is
      new Ada.Containers.Ordered_Maps
-       (Key_Type     => Object_Payload,
+       (Key_Type     => Natural,  --  Symbol_Index of the name
         Element_Type => Object,
         "<"          => "<");
 
    --  Foreign-object registry.  A bound object occupies a slot indexed by
-   --  Foreign_Object_Index; the slot's payload band is Foreign_Object_Payload.
+   --  Foreign_Object_Index.
    --  Pinned slots are unconditional GC roots (survive regardless of
    --  reachability); Marked is the per-collection live flag used by the mark
    --  and sweep phases.  A null Ref is a free slot, reused via Free_Slots.

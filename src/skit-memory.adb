@@ -14,7 +14,7 @@ is
    --  any live semispace, so a stale read of a reclaimed cell either trips the
    --  heap check or faults on the out-of-range index instead of silently
    --  returning plausible-looking garbage.
-   Invalid : constant Object := Application (Object_Payload'Last);
+   Invalid : constant Object := Application (Cell_Address'Last);
 
    procedure Poison_From_Space (This : in out Instance)
      with Pre => Valid (This);
