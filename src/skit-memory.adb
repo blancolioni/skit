@@ -409,11 +409,23 @@ is
             pragma Assert
               (Is_Forwarded_Cell
                  (This.Core, Address, This.To_Space, This.Top));
+            --  The forwarding pointer is live, which keeps Collecting
+            --  for Address.
+            pragma Assert (Is_Live (This, This.Core (Address).Left));
             pragma Assert
               (for all A in This.Core'Range =>
                  (if A >= This.From_Space and then A < This.From_Free
                     and then A /= Address
                   then Before_Forward (A).Left = This.Core (A).Left));
+            --  Collecting, one old-heap cell at a time: the others are as
+            --  they were after Copy, and Address's Right is untouched.
+            pragma Assert
+              (for all A in This.Core'Range =>
+                 (if A >= This.From_Space and then A < This.From_Free
+                    and then A /= Address
+                  then Is_Unmoved (This, This.Core (A).Left)
+                       or else Is_Live (This, This.Core (A).Left)));
+            pragma Assert (Is_Unmoved (This, This.Core (Address).Right));
          end;
          Lemma_Forward_One
            (Before_Forward, This.Core, This.From_Space, This.From_Free,

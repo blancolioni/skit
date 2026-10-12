@@ -101,17 +101,18 @@ before touching the other sections.
 
 **Fixed size** (no variable-length fields) so `section_count` — and the
 directory that follows — sit at constant offsets. Guards the ADR 0001
-representation change so an old reader refuses a wider word rather than
-misreading it.
+representation choice: skit can be built with either object representation
+(option D), and a reader refuses an image whose `word_size` or `tag_layout`
+differs from its own build's, rather than misreading it.
 
 | Field            | Type    | Notes |
 |------------------|---------|-------|
 | `magic`          | `u8[4]` | `"SKIX"` (0x53 0x4B 0x49 0x58) |
 | `format_version` | `u16`   | this container format |
 | `vm_version`     | `u16`   | pins the baked combinator payloads (1..9 + `Suspension`) |
-| `word_size`      | `u8`    | bits per object word: 32 today |
-| `tag_size`       | `u8`    | tag bits per word: 2 today |
-| `tag_layout`     | `u8`    | id of the tag enum ordering; `0` = `Integer, Primitive, Application, Float` as in [skit.ads](../src/skit.ads) |
+| `word_size`      | `u8`    | bits per object word: 32 or 64, depending on the build's object representation |
+| `tag_size`       | `u8`    | tag bits per word: 2 for the 32-bit word, 16 (the box tag) for the NaN-boxed one |
+| `tag_layout`     | `u8`    | id of the word's layout; `0` = 32-bit tagged, tags `Integer, Primitive, Application, Float`; `1` = NaN-boxed 64-bit. See [src/representation](../src/representation) |
 | `endianness`     | `u8`    | `0` = little, `1` = big — applies to every `uN` in the file |
 | `flags`          | `u16`   | reserved (0) |
 | `module_name`    | `u32`   | `nameref` into the String Pool |

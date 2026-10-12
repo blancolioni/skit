@@ -6,6 +6,7 @@ with Ada.Streams;
 with Ada.Streams.Stream_IO;
 with Ada.Wide_Wide_Text_IO;
 with Ada.Text_IO;
+with Ada.Unchecked_Conversion;
 with Interfaces;
 
 with Ada.Strings.Unbounded;
@@ -379,8 +380,7 @@ package body Skit.Tests is
 
    function Prim (P : Natural) return Stack_Operation_Type is
    begin
-      return Push
-        (Object'(Object_Payload (P + 64), Primitive_Object));
+      return Push (Primitive_Function (P));
    end Prim;
 
    ------------
@@ -1852,6 +1852,114 @@ package body Skit.Tests is
          Ada.Directories.Delete_File (Path);
       end if;
    end Test_Malformed_Images;
+
+   -------------------------
+   -- Test_Representation --
+   -------------------------
+
+   procedure Test_Representation is
+
+      use Interfaces;
+
+      function To_Bits is
+        new Ada.Unchecked_Conversion (Long_Float, Unsigned_64);
+      function From_Bits is
+        new Ada.Unchecked_Conversion (Unsigned_64, Long_Float);
+
+      type Unsigned_64_Array is array (Positive range <>) of Unsigned_64;
+
+      NaNs : constant Unsigned_64_Array :=
+               [16#FFF9_0000_0000_0001#,   --  in the integer box
+                16#FFFA_0000_0000_0003#,   --  in the primitive box: I
+                16#FFFB_0000_0000_0000#,   --  in the application box
+                16#FFF8_0000_0000_0000#,   --  x86's 0.0 / 0.0
+                16#7FF0_0000_0000_0001#];  --  a signalling NaN
+
+      Infinity : constant Unsigned_64 := 16#7FF0_0000_0000_0000#;
+
+      procedure Check (Name : String; Cond : Boolean);
+
+      function Round_Trip (X : Long_Float) return Long_Float
+      is (To_Float (To_Object (X)));
+
+      function Next (X : Integer) return Integer
+      is (X + 1);
+      --  Not static, so that Next (Max_Integer) is not folded where it
+      --  would overflow (it is only called in the 32-bit word).
+
+      -----------
+      -- Check --
+      -----------
+
+      procedure Check (Name : String; Cond : Boolean) is
+      begin
+         Total := @ + 1;
+         Put (Name, 38);
+         Ada.Text_IO.Set_Col (40);
+         if Cond then
+            Pass := @ + 1;
+            Ada.Text_IO.Put_Line ("PASS");
+         else
+            Fail := @ + 1;
+            Ada.Text_IO.Put_Line ("FAIL");
+         end if;
+      end Check;
+
+   begin
+      Ada.Text_IO.Put_Line
+        ("Object representation:" & Word_Size'Image & "-bit");
+
+      Check ("repr: Max_Integer round-trips",
+             To_Integer (To_Object (Max_Integer)) = Max_Integer);
+      Check ("repr: Min_Integer round-trips",
+             To_Integer (To_Object (Min_Integer)) = Min_Integer);
+      Check ("repr: 0.5 round-trips", Round_Trip (0.5) = 0.5);
+      Check ("repr: -0.0 keeps its sign",
+             To_Bits (Round_Trip (-0.0)) = To_Bits (-0.0));
+
+      case Word_Size is
+         when 64 =>
+            Check ("repr: 0.1 round-trips exactly", Round_Trip (0.1) = 0.1);
+            Check ("repr: Long_Float'Last round-trips",
+                   Round_Trip (Long_Float'Last) = Long_Float'Last);
+            Check ("repr: Long_Float'Model_Small",
+                   Round_Trip (Long_Float'Model_Small)
+                   = Long_Float'Model_Small);
+
+            --  NaNs whose bits fall in, or next to, the boxes. Each must
+            --  come back a float, and a NaN, never a boxed value. With
+            --  validity checks on (-gnatVa), passing a NaN or an infinity
+            --  as a float parameter raises Constraint_Error, so they are
+            --  off here.
+
+            pragma Validity_Checks (Off);
+
+            for J in NaNs'Range loop
+               declare
+                  O : constant Object := To_Object (From_Bits (NaNs (J)));
+               begin
+                  Check ("repr: NaN" & J'Image & " stays a float",
+                         Is_Float (O)
+                         and then not Is_Integer (O)
+                         and then not Is_Application (O)
+                         and then O /= Skit.I
+                         and then To_Bits (To_Float (O))
+                                  = 16#7FF8_0000_0000_0000#);
+               end;
+            end loop;
+
+            Check ("repr: infinity round-trips",
+                   To_Bits (To_Float (To_Object (From_Bits (Infinity))))
+                   = Infinity);
+
+            pragma Validity_Checks (On);
+
+         when others =>
+            Check ("repr: integers wrap at 30 bits",
+                   To_Integer (To_Object (Next (Max_Integer))) = Min_Integer);
+            Check ("repr: 0.1 loses precision", Round_Trip (0.1) /= 0.1);
+      end case;
+   end Test_Representation;
 
    ---------
    -- Var --

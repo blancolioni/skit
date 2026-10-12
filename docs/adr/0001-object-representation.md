@@ -1,6 +1,9 @@
 # ADR 0001: Skit Object Representation
 
-- **Status:** Deferred (2026-07-15) — option C (NaN-boxed 64-bit) is the target
+- **Status:** Accepted (2026-10-12): option D, with the 32-bit word (A) as the
+  default and the NaN-boxed word (C) available at build time. Implemented in
+  skit#7; see Consequences.
+  Before that, deferred (2026-07-15) — option C (NaN-boxed 64-bit) is the target
   representation and its cost is now measured (bounded, memory-bound, ≈ +10–20%
   wall at the small-heap regime the reduction fixes make optimal). But the
   correctness prize is unrealized until the numeric tower exists, so adopting C
@@ -262,7 +265,50 @@ part of it.
 
 ## Consequences
 
-To be recorded once a decision is reached. The public interface in
-[skit.ads](../../src/skit.ads) (`To_Object`, `Is_Integer`, `To_Integer`,
-`Is_Application`, `To_Variable_Object`) is intended to remain stable so callers
-are unaffected regardless of the chosen representation.
+Recorded 2026-10-12, when option D was implemented (skit#7).
+
+- **Choosing.** The crate-configuration variable `Object_Representation`
+  (`Tagged_32` by default, or `NaN_Boxed_64`) selects a source directory under
+  [src/representation](../../src/representation) in `skit.gpr`. Each holds a
+  completion of package `Skit_Representation`: the word type, the tag and
+  payload accessors, a constructor, and the integer and float encodings, with
+  the same names and contracts. Root `Skit` derives `Object` from that word;
+  everything else in `skit.ads`, from the payload bands to the combinators,
+  is shared. A crate chooses in its own `alire.toml`:
+
+  ```toml
+  [configuration.values]
+  skit.Object_Representation = "NaN_Boxed_64"
+  ```
+
+- **The NaN-boxed layout.** A float is stored as its IEEE double bits. The top
+  16 bits `FFF9`, `FFFA` and `FFFB` box an integer (low 32 bits), a primitive
+  and an application (low 30 bits each); any other word is a float. Every NaN
+  is stored as the positive quiet NaN `7FF8_0000_0000_0000`, so no float lands
+  in a box. That is proved on the integer word, for every bit pattern.
+- **What differs between builds.** `Word_Size`, `Max_Integer` and
+  `Min_Integer` (±2^29 and wrapping, or all of `Integer`), and floats: a
+  `Float` with two mantissa bits dropped, or a full `Long_Float` including
+  NaNs and infinities. `Is_Representable (Long_Float)` says what a build can
+  hold; it replaces the precondition that a `Long_Float` fit in a `Float`.
+  Cell addresses stay 30 bits in both, so the heap limit is unchanged.
+- **Images** record `word_size` and `tag_layout` (0 or 1), and a build loads
+  only its own kind. The format version is unchanged: the fields were already
+  there, and nothing else in the format depends on the representation.
+- **Validity checks.** With `-gnatVa`, GNAT treats a NaN or an infinity in a
+  float variable as invalid data, so they are off in skit's float
+  conversions. A host compiled with `-gnatVa` that passes a NaN or an
+  infinity as a float will still fail its own checks; that is the host's
+  choice of switches.
+- **Proof.** Root `Skit`, `Skit.Memory` and `Skit_Representation` are proved
+  for each representation, with a recorded session each
+  (`proof/tagged_32`, `proof/nan_boxed_64`). The collector's proof is the
+  same for both: `Is_Application` and `Payload` are hidden from it
+  (`Hide_Info`), so it relies only on `Application`'s postcondition, as
+  "Interaction with the SPARK proof" anticipated.
+- **CI** builds, tests and proves both representations. leander's suites
+  still have to run both ways, with per-variant expectations where overflow
+  or precision shows; that is not done here.
+- **Not settled:** the open questions above about distinct `Float` and
+  `Double`, and measuring the tower's float density. The 32-bit word stays the
+  default until that measurement says otherwise.

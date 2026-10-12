@@ -98,11 +98,12 @@ begin
    --  Call_Primitive popped one item short and read past its arguments.
 
    Test ("seq I (+ 1 2)", 3);
-   Test ("eq #maxInt 536870911 1 0", 1);
-   Test ("+ 0 #minInt", -536870912);
+   Test ("eq #maxInt" & Skit.Max_Integer'Image & " 1 0", 1);
+   Test ("+ 0 #minInt", Skit.Min_Integer);
    Test_Foreign_Objects;
    Test_Foreign_Nested;
    Test_Images;
    Test_Malformed_Images;
+   Test_Representation;
    Report;
 end Skit_Tests;

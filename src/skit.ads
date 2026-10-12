@@ -1,15 +1,20 @@
 with Ada.Streams;
+with Skit_Representation;
 
 package Skit
   with SPARK_Mode
 is
 
-   Word_Size    : constant := 32;
-   Tag_Size     : constant := 2;
-   Payload_Size : constant := Word_Size - Tag_Size;
+   --  An Object is one word, in whichever representation this build of
+   --  skit was configured with (ADR 0001, option D): a 32-bit tagged word
+   --  by default, or a NaN-boxed 64-bit word. See alire.toml.
 
-   Max_Integer : constant := 2 ** (Payload_Size - 1) - 1;
-   Min_Integer : constant := -2 ** (Payload_Size - 1);
+   Word_Size : constant := Skit_Representation.Word_Size;
+
+   Max_Integer : constant := Skit_Representation.Max_Integer;
+   Min_Integer : constant := Skit_Representation.Min_Integer;
+   --  The integers an Object holds exactly: 30-bit in the 32-bit word,
+   --  every Integer in the 64-bit one.
 
    type Object is private;
    type Object_Array is array (Positive range <>) of Object;
@@ -18,24 +23,41 @@ is
    function To_Integer (X : Object) return Integer
      with Pre => Is_Integer (X);
 
+   --  In the 64-bit word, Min_Integer .. Max_Integer is all of Integer,
+   --  and the compiler warns that the test below is always true.
+   pragma Warnings (Off, "range test optimized away");
+   pragma Warnings (Off, "value is known to be in range");
    function To_Object (X : Integer) return Object
      with Post => Is_Integer (To_Object'Result)
-                  and then (if X in Min_Integer .. Max_Integer
+                  and then (if Long_Long_Integer (X)
+                                 in Min_Integer .. Max_Integer
                             then To_Integer (To_Object'Result) = X);
+   pragma Warnings (On, "range test optimized away");
+   pragma Warnings (On, "value is known to be in range");
    --  An integer outside Min_Integer .. Max_Integer wraps to the payload
    --  width, as Int arithmetic does; inside it, the value round-trips.
+
+   --  The 64-bit word holds NaNs and infinities, which validity checking
+   --  (-gnatVa) treats as invalid data, so it is off for the float
+   --  conversions.
+   pragma Validity_Checks (Off);
+
+   function Is_Representable (X : Long_Float) return Boolean;
+   --  Whether a float object can hold X. The 32-bit word holds a Float,
+   --  so X has to fit in one; the 64-bit word holds any Long_Float.
 
    function To_Object (X : Float) return Object
      with Post => Is_Float (To_Object'Result);
 
    function To_Object (X : Long_Float) return Object
-     with Pre  => X in Long_Float (Float'First) .. Long_Float (Float'Last),
+     with Pre  => Is_Representable (X),
           Post => Is_Float (To_Object'Result);
-   --  A float object holds a Float, so a Long_Float has to fit in one.
 
    function Is_Float (X : Object) return Boolean;
    function To_Float (X : Object) return Long_Float
      with Pre => Is_Float (X);
+
+   pragma Validity_Checks (On);
 
    function Is_Application (X : Object) return Boolean;
    function Is_Symbol (X : Object) return Boolean;
@@ -140,25 +162,53 @@ is
 
 private
 
-   type Object_Payload is mod 2 ** Payload_Size;
+   --  Object is the representation's word, and inherits its operations:
+   --  Tag_Of, Word_Payload, Make_Word and the integer and float encodings.
+   --  Those are the only code that knows the layout. Everything below is
+   --  written in terms of them, and is the same for every representation.
+
+   use all type Skit_Representation.Object_Tag;
+
+   type Object_Payload is new Skit_Representation.Object_Payload;
    subtype Cell_Address is Object_Payload;
+
+   Tag_Size   : constant := Skit_Representation.Tag_Size;
+   Tag_Layout : constant := Skit_Representation.Tag_Layout;
+   --  Recorded in a module image's header, with Word_Size; an image loads
+   --  only into a build with the same representation.
 
    type Counter is mod 2 ** 64;
    --  For statistics only. Being modular, a counter cannot overflow and
    --  raise on a long run, and proof never has to bound it.
 
-   type Object_Tag is
-     (Integer_Object,
-      Primitive_Object,
-      Application_Object,
-      Float_Object);
+   type Object is new Skit_Representation.Word;
 
-   type Object is
-      record
-         Payload : Object_Payload := 0;
-         Tag     : Object_Tag     := Primitive_Object;
-      end record
-     with Pack, Size => 32;
+   --  Payload and Is_Application are all Skit.Memory knows of an Object,
+   --  and the collector is proved knowing only what Application's
+   --  postcondition says about them: that an application built from an
+   --  address is an application with that payload. Their definitions,
+   --  which are the representation's bit layout, are hidden from proof
+   --  except where one of root Skit's own contracts is proved from them.
+   --  Unfolding them inside the collector's quantified invariants makes
+   --  its proof time out, and in the NaN-boxed word they are 64-bit
+   --  division and modulus.
+
+   function Payload (X : Object) return Object_Payload
+   is (Object_Payload (Word_Payload (X)));
+   pragma Annotate
+     (GNATprove, Hide_Info, "Expression_Function_Body", Payload);
+   --  The payload of a primitive or an application.
+
+   function Make_Object
+     (Tag     : Skit_Representation.Object_Tag;
+      Payload : Object_Payload)
+      return Object
+   is (Make_Word (Tag, Skit_Representation.Object_Payload (Payload)))
+     with Pre  => Tag in Primitive_Object | Application_Object,
+          Post => Tag_Of (Make_Object'Result) = Tag
+                  and then Skit.Payload (Make_Object'Result) = Payload;
+   pragma Annotate
+     (GNATprove, Unhide_Info, "Expression_Function_Body", Payload);
 
    Payload_Nil        : constant Object_Payload := 0;
    Payload_S          : constant Object_Payload := 1;
@@ -176,18 +226,26 @@ private
    subtype Combinator_Payload is
      Object_Payload range Payload_S .. Payload_Y;
 
-   Nil        : constant Object := (Payload_Nil, Primitive_Object);
-   S          : constant Object := (Payload_S, Primitive_Object);
-   K          : constant Object := (Payload_K, Primitive_Object);
-   I          : constant Object := (Payload_I, Primitive_Object);
-   C          : constant Object := (Payload_C, Primitive_Object);
-   B          : constant Object := (Payload_B, Primitive_Object);
-   S_Prime    : constant Object := (Payload_S_Prime, Primitive_Object);
-   B_Star     : constant Object := (Payload_B_Star, Primitive_Object);
-   C_Prime    : constant Object := (Payload_C_Prime, Primitive_Object);
-   Y          : constant Object := (Payload_Y, Primitive_Object);
-   Undefined  : constant Object := (Payload_Undefined, Primitive_Object);
-   Suspension : constant Object := (Payload_Suspension, Primitive_Object);
+   function Is_Primitive (O : Object) return Boolean
+   is (Tag_Of (O) = Primitive_Object);
+
+   function Primitive (Payload : Object_Payload) return Object
+   is (Make_Object (Primitive_Object, Payload))
+     with Post => Is_Primitive (Primitive'Result)
+                  and then Skit.Payload (Primitive'Result) = Payload;
+
+   Nil        : constant Object := Primitive (Payload_Nil);
+   S          : constant Object := Primitive (Payload_S);
+   K          : constant Object := Primitive (Payload_K);
+   I          : constant Object := Primitive (Payload_I);
+   C          : constant Object := Primitive (Payload_C);
+   B          : constant Object := Primitive (Payload_B);
+   S_Prime    : constant Object := Primitive (Payload_S_Prime);
+   B_Star     : constant Object := Primitive (Payload_B_Star);
+   C_Prime    : constant Object := Primitive (Payload_C_Prime);
+   Y          : constant Object := Primitive (Payload_Y);
+   Undefined  : constant Object := Primitive (Payload_Undefined);
+   Suspension : constant Object := Primitive (Payload_Suspension);
 
    subtype Primitive_Function_Payload is
      Object_Payload range 64 .. 4095;
@@ -202,78 +260,92 @@ private
    subtype Foreign_Object_Payload is
      Object_Payload range 2 ** 20 .. 2 ** 21 - 1;
 
-   function Payload (X : Object) return Object_Payload
-   is (X.Payload);
-
    function Is_Integer (X : Object) return Boolean
-   is (X.Tag = Integer_Object);
+   is (Tag_Of (X) = Integer_Object);
 
-   --  An expression function, so that its definition is what proof sees:
-   --  the payload is a two's complement Payload_Size-bit integer.
    function To_Integer (X : Object) return Integer
-   is (if X.Payload < 2 ** (Payload_Size - 1)
-       then Integer (X.Payload)
-       else Integer (X.Payload) - 2 ** Payload_Size);
+   is (Decode_Integer (X));
+
+   function To_Object (X : Integer) return Object
+   is (Encode_Integer (X));
+
+   pragma Validity_Checks (Off);  --  as for the declarations above
+
+   function Is_Representable (X : Long_Float) return Boolean
+   is (Skit_Representation.Is_Representable (X));
+
+   function To_Object (X : Float) return Object
+   is (Encode_Float (X));
+
+   function To_Object (X : Long_Float) return Object
+   is (Encode_Long_Float (X));
 
    function Is_Float (X : Object) return Boolean
-   is (X.Tag = Float_Object);
+   is (Tag_Of (X) = Float_Object);
 
-   function Is_Primitive (O : Object) return Boolean
-   is (O.Tag = Primitive_Object);
+   function To_Float (X : Object) return Long_Float
+   is (Decode_Float (X));
+
+   pragma Validity_Checks (On);
 
    function Is_Application (X : Object) return Boolean
-   is (X.Tag = Application_Object);
+   is (Tag_Of (X) = Application_Object);
+   pragma Annotate
+     (GNATprove, Hide_Info, "Expression_Function_Body", Is_Application);
+   --  Hidden from proof, as Payload is (above).
 
    function Is_Symbol (X : Object) return Boolean
-   is (X.Tag = Primitive_Object
-       and then X.Payload in Primitive_Variable_Payload);
+   is (Is_Primitive (X)
+       and then Payload (X) in Primitive_Variable_Payload);
 
    function Is_Undefined (X : Object) return Boolean
    is (X = Undefined);
 
    function Is_Foreign_Object (X : Object) return Boolean
-   is (X.Tag = Primitive_Object
-       and then X.Payload in Foreign_Object_Payload);
+   is (Is_Primitive (X)
+       and then Payload (X) in Foreign_Object_Payload);
 
    function Is_Combinator (X : Object) return Boolean
-   is (Is_Primitive (X) and then X.Payload in Combinator_Payload);
+   is (Is_Primitive (X) and then Payload (X) in Combinator_Payload);
 
    --  The combinators, independently of how the representation encodes
    --  them: code outside the representation names a combinator by this
    --  type, never by its payload. (Nil, Undefined and Suspension are
-   --  special objects, compared for equality.) In this representation the
-   --  combinator payloads are Payload_S .. Payload_Y in this same order, so
-   --  both directions are arithmetic.
+   --  special objects, compared for equality.) The combinator payloads are
+   --  Payload_S .. Payload_Y in this same order, so both directions are
+   --  arithmetic.
 
    type Combinator_Kind is
      (Comb_S, Comb_K, Comb_I, Comb_C, Comb_B,
       Comb_S_Prime, Comb_B_Star, Comb_C_Prime, Comb_Y);
 
    function Combinator_Of (X : Object) return Combinator_Kind
-   is (Combinator_Kind'Val (X.Payload - Payload_S))
+   is (Combinator_Kind'Val (Payload (X) - Payload_S))
      with Pre => Is_Combinator (X);
 
    function To_Object (C : Combinator_Kind) return Object
-   is ((Payload_S + Combinator_Kind'Pos (C), Primitive_Object))
+   is (Primitive (Payload_S + Combinator_Kind'Pos (C)))
      with Post => Is_Combinator (To_Object'Result)
                   and then Combinator_Of (To_Object'Result) = C;
 
    function Is_Primitive_Function (X : Object) return Boolean
-   is (Is_Primitive (X) and then X.Payload in Primitive_Function_Payload);
+   is (Is_Primitive (X) and then Payload (X) in Primitive_Function_Payload);
 
    --  Constructors: the only sanctioned way to build an Object outside the
    --  top-level Skit package, so the tag/payload layout stays private here.
 
    function Application (Address : Object_Payload) return Object
-   is ((Address, Application_Object))
+   is (Make_Object (Application_Object, Address))
      with Post => Is_Application (Application'Result)
                   and then Payload (Application'Result) = Address;
+   pragma Annotate
+     (GNATprove, Unhide_Info, "Expression_Function_Body", Is_Application);
 
    function Address (X : Object) return Cell_Address
-   is (X.Payload)
+   is (Payload (X))
      with Pre => Is_Application (X);
-   --  The cell an application refers to. Outside the representation, use
-   --  this rather than Payload, which is representation-specific.
+   --  The cell an application refers to. Outside root Skit and Skit.Memory,
+   --  use this rather than Payload.
 
    --  Each kind of reference below is a base payload plus an index. The
    --  arithmetic is modular, so an index past the end of its band would
@@ -286,13 +358,12 @@ private
      Primitive_Function_Payload'Last - Primitive_Function_Payload'First;
 
    function Primitive_Function (Index : Natural) return Object
-   is ((Primitive_Function_Payload'First + Object_Payload (Index),
-        Primitive_Object))
+   is (Primitive (Primitive_Function_Payload'First + Object_Payload (Index)))
      with Pre  => Index <= Max_Primitive_Function_Index,
           Post => Is_Primitive_Function (Primitive_Function'Result);
 
    function Primitive_Function_Index (X : Object) return Natural
-   is (Natural (X.Payload - Primitive_Function_Payload'First))
+   is (Natural (Payload (X) - Primitive_Function_Payload'First))
      with Pre => Is_Primitive_Function (X);
 
    --  A symbol is base + its index in the handle's symbol vector.
@@ -301,13 +372,12 @@ private
      Primitive_Variable_Payload'Last - Primitive_Variable_Payload'First;
 
    function Symbol (Index : Natural) return Object
-   is ((Primitive_Variable_Payload'First + Object_Payload (Index),
-        Primitive_Object))
+   is (Primitive (Primitive_Variable_Payload'First + Object_Payload (Index)))
      with Pre  => Index <= Max_Symbol_Index,
           Post => Is_Symbol (Symbol'Result);
 
    function Symbol_Index (X : Object) return Natural
-   is (Natural (X.Payload - Primitive_Variable_Payload'First))
+   is (Natural (Payload (X) - Primitive_Variable_Payload'First))
      with Pre => Is_Symbol (X);
 
    --  A foreign object is base + its slot in the machine's foreign-object
@@ -317,13 +387,12 @@ private
      Foreign_Object_Payload'Last - Foreign_Object_Payload'First;
 
    function Foreign_Object (Index : Natural) return Object
-   is ((Foreign_Object_Payload'First + Object_Payload (Index),
-        Primitive_Object))
+   is (Primitive (Foreign_Object_Payload'First + Object_Payload (Index)))
      with Pre  => Index <= Max_Foreign_Object_Index,
           Post => Is_Foreign_Object (Foreign_Object'Result);
 
    function Foreign_Object_Index (X : Object) return Natural
-   is (Natural (X.Payload - Foreign_Object_Payload'First))
+   is (Natural (Payload (X) - Foreign_Object_Payload'First))
      with Pre => Is_Foreign_Object (X);
 
 end Skit;

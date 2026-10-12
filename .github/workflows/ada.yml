@@ -9,7 +9,16 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
+    # Every object representation skit can be built with (ADR 0001,
+    # option D; the Object_Representation variable in alire.toml).
+    strategy:
+      fail-fast: false
+      matrix:
+        representation: [ Tagged_32, NaN_Boxed_64 ]
+
+    name: build (${{ matrix.representation }})
+
     steps:
     - name: Checkout
       uses: actions/checkout@v3
@@ -19,6 +28,12 @@ jobs:
       with:
         version: 2.1.0
         toolchain: gnat_native^15 gprbuild
+
+    - name: Choose the object representation
+      working-directory: skit_tests
+      run: |
+        printf '\n[configuration.values]\nskit.Object_Representation = "%s"\n' \
+          "${{ matrix.representation }}" >> alire.toml
 
     - name: Build Skit_Tests
       run: cd skit_tests; alr build

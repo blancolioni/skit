@@ -59,6 +59,11 @@ package Skit.Tests is
    --  is recomputed after each change) and check that reading it raises
    --  Image_Error, not some other exception.
 
+   procedure Test_Representation;
+   --  Check what the configured object representation promises: which
+   --  integers round-trip, how much of a float survives, and, in the
+   --  NaN-boxed word, that no float is mistaken for a boxed value.
+
    procedure Report;
 
 private

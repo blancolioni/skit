@@ -1,9 +1,11 @@
 name: Proof (SPARK)
 
-# Proves root Skit and Skit.Memory with GNATprove (ADR 0004).
+# Proves root Skit, Skit.Memory and Skit_Representation with GNATprove
+# (ADR 0004), once for each object representation (ADR 0001, option D).
 #
-# Every pull request and push to main replays the proof recorded in
-# proof/sessions (about two minutes, so it is not worth filtering by path):
+# Every pull request and push to main replays the proof recorded for each
+# representation in proof/<representation>/sessions (a few minutes, so it
+# is not worth filtering by path):
 # each check is re-run with the prover and step limit that discharged it,
 # so the result does not depend on how fast the runner is. If a change
 # breaks a recorded proof, replay fails; re-prove locally and commit the
@@ -26,6 +28,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
+    strategy:
+      fail-fast: false
+      matrix:
+        representation: [ Tagged_32, NaN_Boxed_64 ]
+
+    name: prove (${{ matrix.representation }})
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -44,6 +53,12 @@ jobs:
           ~/.local/share/alire
         key: alire-gnatprove-${{ runner.os }}-${{ hashFiles('proof/alire.toml') }}
 
+    - name: Choose the object representation
+      working-directory: proof
+      run: |
+        printf '\n[configuration.values]\nskit.Object_Representation = "%s"\n' \
+          "${{ matrix.representation }}" >> alire.toml
+
     # The proof crate is never built; this fetches GNATprove and generates
     # skit's config/skit_config.gpr, which skit.gpr needs.
     - name: Prepare
@@ -56,7 +71,7 @@ jobs:
       run: >
         alr -n exec -- gnatprove -P ../skit.gpr --mode=all --replay
         -j0 --counterexamples=off --checks-as-errors=on
-        -u skit.ads skit-memory.ads
+        -u skit.ads skit-memory.ads skit_representation.ads
 
     - name: Prove from scratch
       if: github.event_name == 'schedule'
@@ -64,12 +79,12 @@ jobs:
       run: >
         alr -n exec -- gnatprove -P ../skit.gpr --mode=all --level=4
         -j0 --counterexamples=off --checks-as-errors=on
-        -u skit.ads skit-memory.ads
+        -u skit.ads skit-memory.ads skit_representation.ads
 
     - name: Upload the proof report
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: gnatprove-report
+        name: gnatprove-report-${{ matrix.representation }}
         path: obj/development/gnatprove/gnatprove.out
         if-no-files-found: ignore
