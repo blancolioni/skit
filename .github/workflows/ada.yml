@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
   
 jobs:
-  build:
+  build-representation:
     runs-on: ubuntu-latest
 
     # Every object representation skit can be built with (ADR 0001,
@@ -40,4 +40,16 @@ jobs:
       
     - name: Run tests
       run: cd skit_tests; alr run
-      
+
+  # Branch protection requires a check named "build". The matrix jobs above
+  # report as "build (<representation>)", so this job reports "build" once
+  # all of them have finished. It runs even when one fails, and fails
+  # itself unless every one succeeded: a skipped job would count as
+  # passing.
+  build:
+    needs: build-representation
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check every representation passed
+      run: test "${{ needs.build-representation.result }}" = success

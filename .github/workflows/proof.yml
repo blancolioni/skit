@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  prove:
+  prove-representation:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -88,3 +88,16 @@ jobs:
         name: gnatprove-report-${{ matrix.representation }}
         path: obj/development/gnatprove/gnatprove.out
         if-no-files-found: ignore
+
+  # Branch protection requires a check named "prove". The matrix jobs above
+  # report as "prove (<representation>)", so this job reports "prove" once
+  # all of them have finished. It runs even when one fails, and fails
+  # itself unless every one succeeded: a skipped job would count as
+  # passing.
+  prove:
+    needs: prove-representation
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check every representation passed
+      run: test "${{ needs.prove-representation.result }}" = success
