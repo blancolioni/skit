@@ -21,3 +21,15 @@ development.contracts = "yes"
 
 [[depends-on]]
 resources = "~0.1.0"
+
+# The object representation (ADR 0001, option D). A crate using skit
+# chooses with, in its own alire.toml:
+#
+#   [configuration.values]
+#   skit.Object_Representation = "NaN_Boxed_64"
+#
+# Tagged_32 is a 32-bit word with 30-bit integers and floats. NaN_Boxed_64
+# is a 64-bit word holding full IEEE doubles and 32-bit integers, at about
+# twice the heap footprint.
+[configuration.variables]
+Object_Representation = { type = "Enum", values = ["Tagged_32", "NaN_Boxed_64"], default = "Tagged_32" }

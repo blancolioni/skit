@@ -337,10 +337,7 @@ package body Skit.Handles.Images is
             declare
                X : constant Long_Float := Get_F64 (D, C);
             begin
-               if not X'Valid
-                 or else X not in Long_Float (Float'First)
-                                .. Long_Float (Float'Last)
-               then
+               if not X'Valid or else not Is_Representable (X) then
                   raise Image_Error with "float out of range";
                end if;
                return To_Object (X);
@@ -804,9 +801,9 @@ package body Skit.Handles.Images is
       end loop;
       Put_U16 (Header, 1);    --  format_version
       Put_U16 (Header, 1);    --  vm_version
-      Put_U8 (Header, 32);    --  word_size
-      Put_U8 (Header, 2);     --  tag_size
-      Put_U8 (Header, 0);     --  tag_layout
+      Put_U8 (Header, Word_Size);   --  word_size
+      Put_U8 (Header, Tag_Size);    --  tag_size
+      Put_U8 (Header, Tag_Layout);  --  tag_layout
       Put_U8 (Header, 0);     --  endianness (little)
       Put_U16 (Header, 0);    --  flags
       Put_U32 (Header, Mod_Ref);
@@ -993,7 +990,8 @@ package body Skit.Handles.Images is
             if Format /= 1 then
                raise Image_Error with "unsupported format version";
             end if;
-            if Word_Size /= 32 or else Tag_Layout /= 0
+            if Word_Size /= Skit.Word_Size
+              or else Tag_Layout /= Skit.Tag_Layout
               or else Endianness /= 0
             then
                raise Image_Error with "unsupported object representation";

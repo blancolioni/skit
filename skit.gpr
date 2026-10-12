@@ -4,7 +4,19 @@ project Skit is
    for Library_Name use "Skit";
    for Library_Version use Project'Library_Name & ".so." & Skit_Config.Crate_Version;
 
-   for Source_Dirs use ("src/", "config/");
+   --  The object representation (ADR 0001, option D): each directory under
+   --  src/representation holds one completion of package
+   --  Skit_Representation, which root Skit derives Object from. A crate
+   --  chooses with the Object_Representation configuration variable (see
+   --  alire.toml).
+   Representation := "";
+   case Skit_Config.Object_Representation is
+      when "Tagged_32"    => Representation := "tagged_32";
+      when "NaN_Boxed_64" => Representation := "nan_boxed_64";
+   end case;
+
+   for Source_Dirs use
+     ("src/", "src/representation/" & Representation & "/", "config/");
    for Object_Dir use "obj/" & Skit_Config.Build_Profile;
    for Create_Missing_Dirs use "True";
    for Library_Dir use "lib";
@@ -27,10 +39,11 @@ project Skit is
    end Install;
 
    --  Where GNATprove records how each check was proved, so that CI can
-   --  replay those proofs instead of searching for them again. See
-   --  proof/README.md.
+   --  replay those proofs instead of searching for them again. Root Skit's
+   --  proof differs between representations, so each has its own session.
+   --  See proof/README.md.
    package Prove is
-      for Proof_Dir use "proof";
+      for Proof_Dir use "proof/" & Representation;
    end Prove;
 
 end Skit;
