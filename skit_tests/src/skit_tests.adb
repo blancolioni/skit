@@ -118,5 +118,6 @@ begin
    Test_Malformed_Images;
    Test_Representation;
    Test_Primitive_Exceptions;
+   Test_Install_After_Evaluation;
    Report;
 end Skit_Tests;

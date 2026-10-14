@@ -1865,6 +1865,74 @@ package body Skit.Tests is
    -- Test_Primitive_Exceptions --
    -------------------------------
 
+   procedure Test_Install_After_Evaluation is
+
+      --  Each round installs a term of about Width cells and evaluates it
+      --  to a small value, leaving the term itself as garbage.  On a core
+      --  of 4096 cells, three rounds without a collection between them do
+      --  not fit; with one before each Install, any number do.
+
+      Width  : constant := 1200;
+      Rounds : constant := 10;
+
+      H : constant Skit.Handles.Handle :=
+            Skit.Handles.New_Handle (Core_Size => 4096);
+
+      function Resolve (Name : String) return Object;
+
+      -------------
+      -- Resolve --
+      -------------
+
+      function Resolve (Name : String) return Object is
+         pragma Unreferenced (Name);
+      begin
+         return Undefined;
+      end Resolve;
+
+      --  K 7 (I (I (... (I 0)))): the I chain is never needed.
+      function Wide return Skit.Terms.Term is
+         use Skit.Terms;
+         Chain : Term := Const (0);
+      begin
+         for I in 1 .. Width loop
+            Chain := Apply (Combinator (Skit.I), Chain);
+         end loop;
+         return Apply (Apply (Combinator (Skit.K), Const (7)), Chain);
+      end Wide;
+
+      Completed : Natural := 0;
+      Correct   : Boolean := True;
+
+   begin
+      for Round in 1 .. Rounds loop
+         H.Install (Wide, Resolve'Access);
+         H.Evaluate;
+         Correct := Correct and then H.Pop = Skit.To_Object (7);
+         Completed := Completed + 1;
+      end loop;
+
+      Total := @ + 1;
+      Put ("install after evaluation, repeatedly", 38);
+      Ada.Text_IO.Set_Col (40);
+      if Completed = Rounds and then Correct then
+         Pass := @ + 1;
+         Ada.Text_IO.Put_Line ("PASS");
+      else
+         Fail := @ + 1;
+         Ada.Text_IO.Put_Line ("FAIL");
+      end if;
+   exception
+      when E : others =>
+         Total := @ + 1;
+         Fail := @ + 1;
+         Put ("install after evaluation, repeatedly", 38);
+         Ada.Text_IO.Set_Col (40);
+         Ada.Text_IO.Put_Line
+           ("FAIL after" & Completed'Image & " rounds: "
+            & Ada.Exceptions.Exception_Message (E));
+   end Test_Install_After_Evaluation;
+
    procedure Test_Primitive_Exceptions is
 
       procedure Check (Name : String; Cond : Boolean);

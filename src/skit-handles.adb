@@ -155,7 +155,22 @@ package body Skit.Handles is
       end Install;
 
    begin
-      return Install (Top_Term);
+      if This.H.Installing = 0
+        and then This.H.Machine.Evaluated_Since_Collect
+      then
+         This.H.Machine.Collect;
+      end if;
+
+      This.H.Installing := @ + 1;
+      begin
+         return Result : constant Object := Install (Top_Term) do
+            This.H.Installing := @ - 1;
+         end return;
+      exception
+         when others =>
+            This.H.Installing := @ - 1;
+            raise;
+      end;
    end Install;
 
    ----------
