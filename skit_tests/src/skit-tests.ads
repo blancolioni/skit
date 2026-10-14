@@ -65,6 +65,11 @@ package Skit.Tests is
    --  NaN-boxed word, that no float is mistaken for a boxed value.
 
    procedure Test_Primitive_Exceptions;
+
+   procedure Test_Install_After_Evaluation;
+   --  Install collects the garbage an evaluation left before it builds,
+   --  so a machine that evaluates and then installs more does not run out
+   --  of memory on garbage alone.
    --  An exception raised by a primitive propagates out of Evaluate and
    --  leaves the handle usable: a later evaluation on the same handle
    --  works, and the stack holds what it held before the failed one.

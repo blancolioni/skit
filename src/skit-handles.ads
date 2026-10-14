@@ -57,10 +57,11 @@ package Skit.Handles is
       return Object;
    --  Build Top_Term into the machine using raw allocation; no GC can
    --  run, because intermediate objects are held on the Ada call stack
-   --  and are invisible to the collector.  Call only on an empty
-   --  machine, immediately after a GC, or on a machine whose only
-   --  prior operations are other calls to Install.  Running out of
-   --  memory here means the machine is too small for the term.
+   --  and are invisible to the collector.  So Install collects first,
+   --  when an evaluation has left garbage since the last collection:
+   --  only the outermost Install, never one that Resolve makes while an
+   --  enclosing build is still in Ada locals.  Running out of memory here
+   --  means the machine is too small for the term.
 
    procedure Install
      (This     : Handle'Class;
@@ -145,6 +146,8 @@ private
          Map       : Symbol_Maps.Map;
          Vector    : Symbol_Vectors.Vector;
          User_Data : User_Data_Reference;
+         Installing : Natural := 0;
+         --  How many Install calls are under way, nested through Resolve.
       end record;
 
    type Handle_Access is access Handle_Record;

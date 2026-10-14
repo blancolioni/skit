@@ -149,6 +149,16 @@ package body Skit.Machines is
       return Skit.Debug.Image (X, This.Core);
    end Debug_Image;
 
+   -------------
+   -- Collect --
+   -------------
+
+   procedure Collect (This : in out Instance'Class) is
+      No_Roots : Object_Array (1 .. 0);
+   begin
+      This.GC (No_Roots);
+   end Collect;
+
    --------------
    -- Evaluate --
    --------------
@@ -175,6 +185,7 @@ package body Skit.Machines is
          This.Push (X);
       end if;
       This.Eval_Time := @ + (Clock - Start);
+      This.Evaluated := True;
 
    exception
       when E : others =>
@@ -840,6 +851,7 @@ package body Skit.Machines is
    is
       use Skit.Memory;
    begin
+      This.Evaluated := False;
       if Trace or else Instrument then
          declare
             use Ada.Calendar;

@@ -140,6 +140,14 @@ private package Skit.Machines is
      (This      : in out Instance'Class;
       User_Data : access User_Data_Interface'Class);
 
+   procedure Collect (This : in out Instance'Class);
+   --  Collect garbage now, keeping what the machine's own roots reach.
+
+   function Evaluated_Since_Collect (This : Instance'Class) return Boolean;
+   --  Whether an evaluation has finished since the last collection, and so
+   --  may have left garbage behind.  Install cannot collect, so it needs
+   --  that garbage gone first (see Skit.Handles.Install).
+
    function Debug_Image
      (This : Instance'Class;
       X    : Object)
@@ -208,8 +216,13 @@ private
          GC_Time           : Duration := 0.0;
          GC_Count          : Counter := 0;
          Eval_Time         : Duration := 0.0;
+         Evaluated         : Boolean := False;
+         --  Set when an evaluation finishes, cleared by every collection.
          Core              : Skit.Memory.Instance (Core_Size);
       end record;
+
+   function Evaluated_Since_Collect (This : Instance'Class) return Boolean
+   is (This.Evaluated);
 
    function Left
      (This : Instance'Class;
