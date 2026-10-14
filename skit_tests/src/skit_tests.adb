@@ -98,6 +98,18 @@ begin
    --  Call_Primitive popped one item short and read past its arguments.
 
    Test ("seq I (+ 1 2)", 3);
+
+   --  Regression: a strict argument reducing to a partial application that
+   --  has arguments, the shape of a Scott-encoded value with fields such
+   --  as Just 1.  Its spine stays on Control when the head is too short of
+   --  arguments to reduce, and only the bare head used to reach the
+   --  primitive: seq handed back something built from its first argument.
+
+   Test ("seq (K 1) (+ 2 3)", 5);
+   Test ("seq (C I 1) 7", 7);
+   Test ("seq (K 1) K 7 8", 7);
+   Test ("+ (seq (K 1) 2) (seq (S K) 3)", 5);
+   Test ("seq (+ 1) 9", 9);
    Test ("eq #maxInt" & Skit.Max_Integer'Image & " 1 0", 1);
    Test ("+ 0 #minInt", Skit.Min_Integer);
    Test_Foreign_Objects;

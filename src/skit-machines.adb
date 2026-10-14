@@ -238,6 +238,29 @@ package body Skit.Machines is
       function Top return Object
       is (Skit.Memory.Left (This.Core, This.Internal (Control)));
 
+      --  A pending primitive call is parked on the secondary stack as
+      --  [App (Partial, Suspension), Mark, Root, ...].  Mark is the Control
+      --  its current strict argument was pushed onto: everything above it
+      --  on Control is that argument's spine, and everything below belongs
+      --  to whatever applied the primitive in the first place.
+
+      function Call_Pending return Boolean
+      is (Is_App (This.Internal (Secondary_Stack))
+          and then Is_App (Left (This.Internal (Secondary_Stack)))
+          and then Right (Left (This.Internal (Secondary_Stack)))
+                   = Suspension);
+
+      function Boundary return Object
+      is (if Call_Pending
+          then Left (Right (This.Internal (Secondary_Stack)))
+          else Nil);
+      --  Where the spine of the expression being reduced ends on Control:
+      --  a pending call's mark, or the bottom.  A combinator or primitive
+      --  takes its arguments from above it, never from below.
+
+      function Spine_Has (Count : Natural) return Boolean;
+      --  Whether Control holds at least Count nodes above Boundary.
+
       function Is_Defined_Primitive
         (X : Object)
          return Boolean
@@ -469,6 +492,11 @@ package body Skit.Machines is
          if Fn.Argument_Count = 0 then
             Call_Primitive (Fn);
             Changed := True;
+         elsif not Spine_Has (Fn.Argument_Count) then
+            --  Short of arguments: a partial application, which is already
+            --  a value.  Leaving Changed unset hands it to the end of the
+            --  main loop, as for a combinator short of arguments.
+            null;
          else
             --  Build the pending call: the primitive applied to all of its
             --  argument spine nodes.  The result, on top of the stack, is a
@@ -491,6 +519,9 @@ package body Skit.Machines is
             begin
                This.Push (Secondary_Stack, Right (Pending));
             end;
+
+            --  The mark, set each time a strict argument is forced.
+            This.Push (Secondary_Stack, Nil);
 
             This.Push (Skit.Suspension);
             This.Apply;
@@ -560,8 +591,13 @@ package body Skit.Machines is
                         Skit.Memory.Set_Left
                            (This.Core, Frame, Left (Partial));
                      when Strict =>
-                        --  Strict: force the argument.  Push it onto
-                        --  Control (a GC root) first, then advance Frame.
+                        --  Strict: force the argument.  Mark where its
+                        --  spine will start, push it onto Control (a GC
+                        --  root), then advance Frame.
+                        Skit.Memory.Set_Left
+                          (This.Core,
+                           Right (This.Internal (Secondary_Stack)),
+                           This.Internal (Control));
                         This.Push (Control, Arg);
                         Skit.Memory.Set_Left
                            (This.Core, Frame, Left (Partial));
@@ -582,6 +618,7 @@ package body Skit.Machines is
             renames This.Prims (P_Index);
          begin
             It := This.Pop (Secondary_Stack);   --  drop the frame
+            It := This.Pop (Secondary_Stack);   --  and the mark
             --  Leave the redex root parked on the secondary stack across the
             --  call so a collection inside Call_Primitive cannot free it.
             Call_Primitive (Fn);
@@ -627,10 +664,11 @@ package body Skit.Machines is
       ---------
 
       function Pop (Args : out Object_Array) return Boolean is
-         P : Object := This.Internal (Control);
+         P     : Object := This.Internal (Control);
+         Limit : constant Object := Boundary;
       begin
          for Arg of Args loop
-            if P = Nil then
+            if P = Nil or else P = Limit then
                return False;
             end if;
             Arg := Skit.Memory.Left (This.Core, P);
@@ -639,6 +677,23 @@ package body Skit.Machines is
          This.Internal (Control) := P;
          return True;
       end Pop;
+
+      ---------------
+      -- Spine_Has --
+      ---------------
+
+      function Spine_Has (Count : Natural) return Boolean is
+         P     : Object := This.Internal (Control);
+         Limit : constant Object := Boundary;
+      begin
+         for I in 1 .. Count loop
+            if P = Nil or else P = Limit then
+               return False;
+            end if;
+            P := Right (P);
+         end loop;
+         return True;
+      end Spine_Has;
 
       -------------
       -- Shorten --
@@ -744,8 +799,27 @@ package body Skit.Machines is
             --  one item short, and Call_Primitive's Pop read past the real
             --  arguments into unrelated stack contents.
 
+            --  A partial application with arguments has left its spine on
+            --  Control above the pending call's mark.  The argument's value
+            --  is the outermost spine node, the whole application -- not
+            --  its head -- and the spine is the argument's alone, so it
+            --  comes off Control here.  Popping allocates nothing, and Push
+            --  keeps its operand safe across a collection.
+
             if Is_Primitive (It) then
-               This.Push (It);
+               if Call_Pending then
+                  declare
+                     Mark  : constant Object := Boundary;
+                     Value : Object := It;
+                  begin
+                     while This.Internal (Control) /= Mark loop
+                        Value := This.Pop (Control);
+                     end loop;
+                     This.Push (Value);
+                  end;
+               else
+                  This.Push (It);
+               end if;
             end if;
 
             Eval_Suspension;
