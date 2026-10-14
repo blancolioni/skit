@@ -187,7 +187,10 @@ private
    --  (R (1), R (2)).  Safe because the two never run concurrently -- see the
    --  Advancing_Primitive assertion in Eval_Combinator.
 
-   type Internal_Register is (Stack, Control, Secondary_Stack);
+   type Internal_Register is (Stack, Control, Secondary_Stack, Base);
+   --  Base holds the caller's stack while Evaluate runs, so that an
+   --  exception can put it back. Like the others it is a GC root, which
+   --  keeps it right when a collection moves the cells it refers to.
    type Internal_Register_Array is array (Internal_Register) of Object;
 
    type Instance (Core_Size : Cell_Address) is tagged limited
