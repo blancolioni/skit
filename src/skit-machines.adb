@@ -1,4 +1,5 @@
 with Ada.Calendar;
+with Ada.Exceptions;
 with Ada.Text_IO;
 with Ada.Unchecked_Deallocation;
 with Skit.Debug;
@@ -165,13 +166,51 @@ package body Skit.Machines is
             Ada.Text_IO.Put_Line
               ("eval: " & This.Debug_Image (X));
          end if;
+         This.Internal (Base) := This.Internal (Stack);
          This.Push (Control, X);
          This.Evaluate_Application (User_Data);
+         This.Internal (Base) := Nil;
       else
          --  Integer, float, or primitive: already a value.
          This.Push (X);
       end if;
       This.Eval_Time := @ + (Clock - Start);
+
+   exception
+      when E : others =>
+         --  An exception from a primitive, or from the machine itself,
+         --  leaves the registers mid-evaluation: pending spine on Control,
+         --  parked calls on Secondary_Stack, collected arguments on Stack,
+         --  and Advancing_Primitive set. Left as they are, the next
+         --  evaluation would trip the Advancing_Primitive assertion, or
+         --  silently resume a stale call or apply its result to stale
+         --  arguments (#36). The graph itself needs no repair: a redex root
+         --  is only overwritten once its result is built, so every cell is
+         --  either still valid or garbage. Restore the caller's stack and
+         --  drop the rest.
+         This.Internal (Stack) := This.Internal (Base);
+         This.Internal (Control) := Nil;
+         This.Internal (Secondary_Stack) := Nil;
+         This.Internal (Base) := Nil;
+         This.R := [others => Nil];
+         This.Advancing_Primitive := False;
+
+         --  Then collect, so that the failed evaluation's cells are free
+         --  again: after running out of memory the heap is full of them,
+         --  and Handle.Install, which cannot collect, needs room. Only on
+         --  this path, so it costs nothing when evaluation succeeds. If
+         --  the collection itself fails, the heap was already broken; the
+         --  original exception says more about why.
+         declare
+            No_Roots : Object_Array (1 .. 0);
+         begin
+            This.GC (No_Roots);
+         exception
+            when others =>
+               null;
+         end;
+
+         Ada.Exceptions.Reraise_Occurrence (E);
    end Evaluate;
 
    --------------------------

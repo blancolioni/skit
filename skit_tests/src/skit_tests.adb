@@ -105,5 +105,6 @@ begin
    Test_Images;
    Test_Malformed_Images;
    Test_Representation;
+   Test_Primitive_Exceptions;
    Report;
 end Skit_Tests;

@@ -139,6 +139,10 @@ package body Skit.Tests is
      (Arguments : Object_Array) return Object
    is (Arguments (2));
 
+   function Evaluate_Fail
+     (Arguments : Object_Array) return Object
+   is (raise Constraint_Error with "#fail" & Arguments'Length'Image);
+
    function Evaluate_Putchar
      (Arguments : Object_Array) return Object;
 
@@ -245,6 +249,10 @@ package body Skit.Tests is
                      (Evaluator'
                         (3, [Strict, Lazy, Lazy],
                          Evaluate_Choose'Access)));
+
+      Handle.Bind ("#fail",
+                   Handle.Primitive
+                     (Evaluator'(0, [], Evaluate_Fail'Access)));
 
       Handle.Bind ("#seq",
                    Handle.Primitive
@@ -1852,6 +1860,134 @@ package body Skit.Tests is
          Ada.Directories.Delete_File (Path);
       end if;
    end Test_Malformed_Images;
+
+   -------------------------------
+   -- Test_Primitive_Exceptions --
+   -------------------------------
+
+   procedure Test_Primitive_Exceptions is
+
+      procedure Check (Name : String; Cond : Boolean);
+
+      function Raises (Source : String) return Boolean;
+      --  Evaluate Source on Handle; True if it raised.
+
+      function Value (Source : String) return Object;
+      --  Evaluate Source on Handle and pop the result.
+
+      -----------
+      -- Check --
+      -----------
+
+      procedure Check (Name : String; Cond : Boolean) is
+      begin
+         Total := @ + 1;
+         Put (Name, 38);
+         Ada.Text_IO.Set_Col (40);
+         if Cond then
+            Pass := @ + 1;
+            Ada.Text_IO.Put_Line ("PASS");
+         else
+            Fail := @ + 1;
+            Ada.Text_IO.Put_Line ("FAIL");
+         end if;
+      end Check;
+
+      ------------
+      -- Raises --
+      ------------
+
+      function Raises (Source : String) return Boolean is
+      begin
+         Handle.Install
+           (Skit.Compiler.Compile (Skit.Parser.Parse (Source, Bind'Access)),
+            Resolve'Access);
+         Handle.Evaluate;
+         declare
+            Discard : constant Object := Handle.Pop;
+         begin
+            return False;
+         end;
+      exception
+         when others =>
+            return True;
+      end Raises;
+
+      -----------
+      -- Value --
+      -----------
+
+      function Value (Source : String) return Object is
+      begin
+         Handle.Install
+           (Skit.Compiler.Compile (Skit.Parser.Parse (Source, Bind'Access)),
+            Resolve'Access);
+         Handle.Evaluate;
+         return Handle.Pop;
+      end Value;
+
+      procedure Raise_Then_Recover (Source : String);
+      --  Evaluate Source, which must raise, with an object beneath it on
+      --  the stack. Then check that the object is still there and nothing
+      --  else is, and that evaluations starting with a combinator and with
+      --  a primitive both give their usual results.
+
+      procedure Expect (Source : String; Result : Integer);
+      --  Evaluate Source; check its value and that the stack is then empty.
+
+      ------------
+      -- Expect --
+      ------------
+
+      procedure Expect (Source : String; Result : Integer) is
+      begin
+         Check ("  then " & Source,
+                Value (Source) = To_Object (Result)
+                and then Handle.Stack_Empty);
+      exception
+         when E : others =>
+            Check ("  then " & Source & ": "
+                   & Ada.Exceptions.Exception_Message (E), False);
+      end Expect;
+
+      ------------------------
+      -- Raise_Then_Recover --
+      ------------------------
+
+      procedure Raise_Then_Recover (Source : String) is
+         Below : constant Object := To_Object (7);
+      begin
+         Handle.Push (Below);
+         Check ("raise: " & Source, Raises (Source));
+         Check ("  stack as before",
+                not Handle.Stack_Empty
+                and then Handle.Pop = Below
+                and then Handle.Stack_Empty);
+         Expect ("S K K 99", 99);
+         Expect ("+ 1 1", 2);
+         --  Leave the handle empty for the next case, whatever happened.
+         while not Handle.Stack_Empty loop
+            declare
+               Discard : constant Object := Handle.Pop;
+            begin
+               null;
+            end;
+         end loop;
+      end Raise_Then_Recover;
+
+   begin
+      Raise_Then_Recover ("#div 1 0");
+      Raise_Then_Recover ("#div 1 0 5");
+      Raise_Then_Recover ("+ 1 (#div 1 0)");
+      Raise_Then_Recover ("+ 1 #fail");
+      Raise_Then_Recover ("(\x.+ x 1) (#div 1 0)");
+      Raise_Then_Recover ("S K K (#div 1 0)");
+
+      --  An exception from the machine itself: the right fold keeps a
+      --  pending call per element live, and runs out of heap. Many
+      --  collections move the caller's stack before it does.
+      Raise_Then_Recover ("sum (fromTo 1 2000)");
+   end Test_Primitive_Exceptions;
 
    -------------------------
    -- Test_Representation --

@@ -64,6 +64,11 @@ package Skit.Tests is
    --  integers round-trip, how much of a float survives, and, in the
    --  NaN-boxed word, that no float is mistaken for a boxed value.
 
+   procedure Test_Primitive_Exceptions;
+   --  An exception raised by a primitive propagates out of Evaluate and
+   --  leaves the handle usable: a later evaluation on the same handle
+   --  works, and the stack holds what it held before the failed one.
+
    procedure Report;
 
 private
